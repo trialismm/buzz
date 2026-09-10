@@ -41,7 +41,7 @@ export function AgentDefinitionDialogShell({
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
       <ChooserDialogContent
-        className="max-w-3xl border-0"
+        className="max-w-5xl border-0"
         contentClassName="pt-3"
         data-testid="persona-dialog"
         description={description}

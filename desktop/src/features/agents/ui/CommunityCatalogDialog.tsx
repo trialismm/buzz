@@ -288,7 +288,7 @@ export function CommunityCatalogDialog({
         open={open}
       >
         <ChooserDialogContent
-          className="h-[42rem] max-w-4xl"
+          className="h-[min(44rem,85vh)] max-w-7xl"
           contentClassName="flex min-h-0 min-w-0 flex-1 p-0"
           data-testid="community-catalog-dialog"
           description="Create, discover, and import agents and teams."
