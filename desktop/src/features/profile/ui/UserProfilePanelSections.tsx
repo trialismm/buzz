@@ -1,3 +1,4 @@
+import { runtimeLabel } from "./UserProfilePanelFields";
 import * as React from "react";
 import { ChevronDown, ChevronUp, Pencil } from "lucide-react";
 
@@ -10,6 +11,8 @@ import {
   isManagedAgentActive,
 } from "@/features/agents/lib/managedAgentControlActions";
 import { RestartDiffBadge } from "@/features/agents/ui/RestartDiffBadge";
+import { ProfileRuntimeQuickControls } from "./ProfileRuntimeQuickControls";
+import { profileRuntimeQuickControlsState } from "./profileRuntimeQuickControlsState";
 import { AgentConfigPanel } from "@/features/agents/ui/AgentConfigPanel";
 import type { IdentityArchiveActions } from "@/features/identity-archive/hooks";
 import { getPresenceLabel } from "@/features/presence/lib/presence";
@@ -209,6 +212,12 @@ export function ProfileSummaryView({
   });
 
   const showMemoriesTab = isOwner === true && Boolean(pubkey);
+  const quickControlsState = profileRuntimeQuickControlsState({
+    managedAgent,
+    isOwner,
+    canEditAgent,
+    runtimeLabel,
+  });
   const showInstructionBlock =
     isOwner === true &&
     (agentInstruction !== null || handleEditPersona !== undefined);
@@ -406,6 +415,14 @@ export function ProfileSummaryView({
           onEditAgent={canEditAgent ? handleEditAgent : undefined}
           presenceStatus={presenceStatus}
           profile={profile}
+          quickControls={
+            quickControlsState.visible && managedAgent ? (
+              <ProfileRuntimeQuickControls
+                agent={managedAgent}
+                harness={quickControlsState.harness}
+              />
+            ) : undefined
+          }
           userStatus={userStatus}
         />
       </div>
@@ -610,12 +627,15 @@ function ProfileHero({
   onEditAgent,
   presenceStatus,
   profile,
+  quickControls,
   userStatus,
 }: {
   displayName: string;
   notManagedOnDevice?: boolean;
   isBot: boolean;
   onEditAgent?: () => void;
+  /** Owner-only runtime pills (harness / model / effort) under the name. */
+  quickControls?: React.ReactNode;
   presenceStatus: "online" | "away" | "offline" | undefined;
   profile: ProfileSummaryViewProps["profile"];
   userStatus: ProfileSummaryViewProps["userStatus"];
@@ -723,6 +743,7 @@ function ProfileHero({
             {userStatus.text}
           </p>
         ) : null}
+        {quickControls ?? null}
       </div>
     </div>
   );

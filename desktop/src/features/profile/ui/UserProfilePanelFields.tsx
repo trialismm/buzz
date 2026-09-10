@@ -32,7 +32,7 @@ const RUNTIME_LABELS: Record<string, string> = {
   aider: "Aider",
 };
 
-function runtimeLabel(command: string): string {
+export function runtimeLabel(command: string): string {
   return RUNTIME_LABELS[command] ?? command;
 }
 

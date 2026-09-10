@@ -205,6 +205,19 @@ with a TypeScript lookup table or an id comparison in a component.
    select a representative or offer persona Start; a relay persona link cannot
    borrow a local sibling's management controls. See
    [the identity contract](../../../../docs/agent-profile-identity.md).
+   The hero's runtime quick controls (`profile/ui/ProfileRuntimeQuickControls.tsx`,
+   test ids `user-profile-quick-*`) follow the same contract: they render only
+   for the owner of the exact local record, show only reported values (no
+   harness pill without an `agentCommand`), and depend on nothing the caller
+   supplies, so they are entry-point invariant. Each pill writes through the
+   IPC the edit dialogs already use, never a new one: Harness pins an
+   instance override (`update_managed_agent` with `agentCommand` +
+   `harnessOverride` + that harness's default args) and then reopens the Model
+   menu; Model writes to the persona for a linked instance (its effective model
+   is `resolve_linked`: definition → global, so `record.model` would be a
+   silent no-op) and propagates via `personaManagedAgentUpdate` exactly like
+   `submitProfilePersonaDialog`, or sets instance `model` for a definition-less
+   record. Pills do not perform live ACP model switches.
    Availability dots read relay presence, never a saved deployment
    receipt or runtime status. Failed/disconnected reads are unknown; lifecycle
    actions retain their separate routing. Current exact-key Online/Away presence
@@ -247,6 +260,16 @@ with a TypeScript lookup table or an id comparison in a component.
    No component owns "configured vs current" logic; the reader's canonical tier
    ordering feeds both facts. Do not add a second effort write path or restate
    the two-facts logic in a component.
+
+   **Second effort surface, same write path.** The owned-agent profile hero
+   renders an immediate-write effort pill (`EffortQuickPicker` in
+   `profile/ui/ProfileRuntimeQuickControls.tsx`). It reuses `effortPickerState`
+   for gating and options, seeds its current value from the canonical
+   `normalized.thinkingEffort.value`, and persists a pick by calling
+   `update_managed_agent` with only `pubkey` + `effortLevel`, then invalidates
+   the config surface. It is not Save-gated, but it introduces no new IPC or
+   setter — the locked `update_managed_agent` field remains the only effort
+   write. Keep it that way: extend `effortPickerState`, not the pill.
 
    **Cut invariant — live mid-conversation effort machinery was deliberately
    removed.** Effort is spawn-scoped only: the worker holds one `startup_effort`
