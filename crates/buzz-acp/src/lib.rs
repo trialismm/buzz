@@ -2,6 +2,7 @@
 
 mod acp;
 mod config;
+mod delivery_fallback;
 mod engram_fetch;
 mod filter;
 mod observer;
@@ -3369,6 +3370,12 @@ async fn tokio_main() -> Result<()> {
                             }
 
                             if config.ignore_self && buzz_event.event.pubkey.to_hex() == pubkey_hex {
+                                // Our own post: the delivery fallback needs to know the
+                                // agent answered this channel itself.
+                                pool.self_posts.record(
+                                    buzz_event.channel_id,
+                                    buzz_event.event.created_at.as_secs(),
+                                );
                                 tracing::debug!(channel_id = %buzz_event.channel_id, "dropping self-authored event");
                                 continue;
                             }
@@ -4664,6 +4671,86 @@ fn spawn_failure_notice(
     }
 }
 
+/// After a turn ends, publish the agent's streamed prose if a human asked and
+/// the agent posted nothing itself (see `delivery_fallback`). Always drains the
+/// turn's probe and prose so they cannot leak into the next turn.
+fn schedule_delivery_fallback(
+    pool: &AgentPool,
+    config: &Config,
+    result: &mut PromptResult,
+    rest_client: Option<&relay::RestClient>,
+) {
+    let probe = result.agent.acp.take_delivery_probe();
+    let turn_text = result.agent.acp.take_turn_text();
+    let tool_sent = result.agent.acp.take_turn_sent_message();
+    let ended_normally = matches!(
+        (&result.source, &result.outcome),
+        (
+            PromptSource::Channel(_),
+            PromptOutcome::Ok(acp::StopReason::EndTurn)
+        )
+    );
+    let Some(rest) = rest_client.filter(|_| ended_normally) else {
+        return;
+    };
+    let Some(probe) = probe else {
+        return;
+    };
+    let rest = rest.clone();
+    let self_posts = pool.self_posts.clone();
+    let enabled = config.delivery_fallback;
+    let turn_id = result.turn_id.clone();
+    tokio::spawn(async move {
+        // Give the agent's own `buzz messages send` time to echo back before
+        // deciding the turn was silent.
+        tokio::time::sleep(delivery_fallback::DELIVERY_GRACE).await;
+        // Cheap local signals first; the relay query is the ground truth and
+        // its failure means "unverified", which keeps the fallback silent.
+        let evidence = if tool_sent || self_posts.posted_since(probe.channel_id, probe.started_unix)
+        {
+            delivery_fallback::AgentPostEvidence::Posted
+        } else {
+            match delivery_fallback::relay_has_agent_post(
+                &rest,
+                probe.channel_id,
+                probe.started_unix,
+            )
+            .await
+            {
+                Some(true) => delivery_fallback::AgentPostEvidence::Posted,
+                Some(false) => delivery_fallback::AgentPostEvidence::NotPosted,
+                None => delivery_fallback::AgentPostEvidence::Unknown,
+            }
+        };
+        match delivery_fallback::decide(enabled, Some(&probe), &turn_text, evidence) {
+            delivery_fallback::FallbackDecision::Skip(reason) => {
+                tracing::info!(
+                    channel_id = %probe.channel_id,
+                    turn_id = %turn_id,
+                    "delivery fallback skipped: {reason}"
+                );
+            }
+            delivery_fallback::FallbackDecision::Publish(content) => {
+                tracing::info!(
+                    channel_id = %probe.channel_id,
+                    turn_id = %turn_id,
+                    chars = content.chars().count(),
+                    "delivery fallback: publishing streamed prose for a silent human-facing turn"
+                );
+                let tags = delivery_fallback::fallback_thread_tags(&probe);
+                pool::post_agent_message(
+                    &rest,
+                    probe.channel_id,
+                    &tags,
+                    &content,
+                    "delivery fallback",
+                )
+                .await;
+            }
+        }
+    });
+}
+
 #[allow(clippy::too_many_arguments)]
 fn handle_prompt_result(
     pool: &mut AgentPool,
@@ -4841,6 +4928,7 @@ fn handle_prompt_result(
         }
     }
 
+    schedule_delivery_fallback(pool, config, &mut result, rest_client);
     match &result.source {
         PromptSource::Channel(scope) => queue.mark_complete(scope.clone()),
         PromptSource::Heartbeat => *heartbeat_in_flight = false,
@@ -9181,6 +9269,7 @@ mod build_mcp_servers_tests {
             max_turns_per_session: 0,
             presence_enabled: true,
             typing_enabled: true,
+            delivery_fallback: true,
             memory_enabled: false,
             model: None,
             effort_level: None,
@@ -9407,6 +9496,7 @@ mod error_outcome_emission_tests {
             max_turns_per_session: 0,
             presence_enabled: true,
             typing_enabled: true,
+            delivery_fallback: true,
             memory_enabled: false,
             model: None,
             effort_level: None,

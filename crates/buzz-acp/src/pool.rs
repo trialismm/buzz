@@ -35,6 +35,7 @@ use crate::acp::{
     ModelSwitchMethod, StopReason, SystemPromptTransport,
 };
 use crate::config::{compose_scoped_session_title, DedupMode, PermissionMode};
+use crate::delivery_fallback::SelfPostLog;
 use crate::observer;
 use crate::prompt_project::{pick_authoritative_project_home, PromptProjectInfo};
 use crate::queue::{
@@ -338,6 +339,9 @@ impl OwnedAgent {
 /// tasks for panic recovery.
 pub struct AgentPool {
     agents: Vec<Option<OwnedAgent>>,
+    /// The agent's own relay events, recorded by the main loop so the delivery
+    /// fallback can tell a silent turn from one the agent answered itself.
+    pub self_posts: SelfPostLog,
     result_tx: mpsc::UnboundedSender<PromptResult>,
     result_rx: mpsc::UnboundedReceiver<PromptResult>,
     pub join_set: JoinSet<()>,
@@ -847,6 +851,7 @@ impl AgentPool {
         let (result_tx, result_rx) = mpsc::unbounded_channel();
         Self {
             agents: slots,
+            self_posts: SelfPostLog::default(),
             result_tx,
             result_rx,
             join_set: JoinSet::new(),
@@ -2889,6 +2894,17 @@ pub async fn run_prompt_task(
                 "slash-command pass-through"
             );
         }
+
+        // Remember where a human-facing reply must land, so a turn that ends
+        // without the agent posting anything can still deliver its prose.
+        agent
+            .acp
+            .set_delivery_probe(crate::delivery_fallback::probe_for_batch(
+                b,
+                channel_info.as_ref(),
+                profile_lookup.as_ref(),
+                nostr::Timestamp::now().as_secs(),
+            ));
 
         crate::queue::format_prompt(
             b,
@@ -5175,11 +5191,12 @@ pub(crate) async fn reaction_add(rest: &crate::relay::RestClient, event_id: &str
 /// batch is dead-lettered. Replies into the thread of `thread_tags` when the
 /// triggering event was threaded. Errors are logged and swallowed — the
 /// notice must never take down the main loop.
-pub(crate) async fn post_failure_notice(
+pub(crate) async fn post_agent_message(
     rest: &crate::relay::RestClient,
     channel_id: Uuid,
     thread_tags: &ThreadTags,
     content: &str,
+    label: &str,
 ) {
     let thread_ref = thread_tags.root_event_id.as_deref().and_then(|root| {
         let root_id = nostr::EventId::from_hex(root).ok()?;
@@ -5204,24 +5221,33 @@ pub(crate) async fn post_failure_notice(
     ) {
         Ok(b) => b,
         Err(e) => {
-            tracing::warn!(channel = %channel_id, "failure notice: build failed: {e}");
+            tracing::warn!(channel = %channel_id, "{label}: build failed: {e}");
             return;
         }
     };
     let event = match builder.sign_with_keys(&rest.keys) {
         Ok(e) => e,
         Err(e) => {
-            tracing::warn!(channel = %channel_id, "failure notice: sign failed: {e}");
+            tracing::warn!(channel = %channel_id, "{label}: sign failed: {e}");
             return;
         }
     };
     match tokio::time::timeout(Duration::from_secs(5), rest.submit_event(&event)).await {
         Ok(Ok(_)) => {}
-        Ok(Err(e)) => tracing::warn!(channel = %channel_id, "failure notice failed: {e}"),
-        Err(_) => tracing::warn!(channel = %channel_id, "failure notice timed out"),
+        Ok(Err(e)) => tracing::warn!(channel = %channel_id, "{label} failed: {e}"),
+        Err(_) => tracing::warn!(channel = %channel_id, "{label} timed out"),
     }
 }
 
+/// Publish a harness-authored notice about a failed turn.
+pub(crate) async fn post_failure_notice(
+    rest: &crate::relay::RestClient,
+    channel_id: Uuid,
+    thread_tags: &ThreadTags,
+    content: &str,
+) {
+    post_agent_message(rest, channel_id, thread_tags, content, "failure notice").await;
+}
 /// Best-effort: remove a reaction via a signed kind:5 (NIP-09) deletion event.
 ///
 /// Queries kind:7 reactions by our pubkey targeting the event, finds the matching

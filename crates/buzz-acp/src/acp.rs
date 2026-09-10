@@ -189,6 +189,16 @@ pub struct AcpClient {
     /// Other agents may leave this unset — readers must treat `None` as
     /// "no active run to steer into" and fall back to cancel+merge.
     active_run_id: Option<String>,
+    /// Assistant prose streamed during the current turn (`agent_message_chunk`
+    /// deltas concatenated). Cleared when a prompt starts; taken by the
+    /// delivery fallback after `end_turn`.
+    turn_text: String,
+    /// True once a `tool_call` in the current turn ran `buzz messages send`
+    /// (the agent delivered its own reply). Reset when a prompt starts.
+    turn_sent_message: bool,
+    /// Reply destination captured for the in-flight turn (see
+    /// `delivery_fallback`). `None` for heartbeats.
+    delivery_probe: Option<crate::delivery_fallback::DeliveryProbe>,
     /// Whether the agent advertised `_meta.steering.supported: true` in its
     /// `initialize` response, meaning it implements the cross-adapter
     /// [`ACP_STEER_METHOD`] extension.
@@ -558,6 +568,9 @@ impl AcpClient {
             observer_agent_index: None,
             observer_context: ObserverContext::default(),
             active_run_id: None,
+            turn_text: String::new(),
+            turn_sent_message: false,
+            delivery_probe: None,
             steering_supported: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
@@ -782,6 +795,10 @@ impl AcpClient {
         max_duration: std::time::Duration,
     ) -> Result<StopReason, AcpError> {
         let params = build_prompt_params(session_id, prompt_blocks);
+        // A new turn's prose must not inherit text from a previous (possibly
+        // aborted) turn.
+        self.turn_text.clear();
+        self.turn_sent_message = false;
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
 
@@ -929,6 +946,26 @@ impl AcpClient {
     /// so that `install_steer_rx`'s `is_none()` invariant holds for the next
     /// dispatch even when the turn ended before the read loop ran `take()`.
     /// Idempotent — safe to call when `steer_rx` is already `None`.
+    /// Take the prose streamed during the last turn, leaving the buffer empty.
+    pub fn take_turn_text(&mut self) -> String {
+        std::mem::take(&mut self.turn_text)
+    }
+
+    /// Whether the last turn ran `buzz messages send` itself; resets the flag.
+    pub fn take_turn_sent_message(&mut self) -> bool {
+        std::mem::take(&mut self.turn_sent_message)
+    }
+
+    /// Remember where this turn's human-facing reply must land.
+    pub fn set_delivery_probe(&mut self, probe: Option<crate::delivery_fallback::DeliveryProbe>) {
+        self.delivery_probe = probe;
+    }
+
+    /// Take the probe recorded for the turn that just ended.
+    pub fn take_delivery_probe(&mut self) -> Option<crate::delivery_fallback::DeliveryProbe> {
+        self.delivery_probe.take()
+    }
+
     pub fn clear_steer_rx(&mut self) {
         self.steer_rx = None;
     }
@@ -1756,6 +1793,11 @@ impl AcpClient {
             "agent_message_chunk" => {
                 if let Some(text) = update["content"]["text"].as_str() {
                     tracing::info!(target: "acp::stream", "{text}");
+                    crate::delivery_fallback::track_turn_prose(
+                        &mut self.turn_text,
+                        "agent_message_chunk",
+                        Some(text),
+                    );
                 }
                 false
             }
@@ -1769,6 +1811,13 @@ impl AcpClient {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
                 tracing::info!(target: "acp::tool", "tool_call: {title} ({kind})");
+                // Prose before a tool call is narration ("I'll send…"); only text
+                // after the last tool call can stand in for the reply.
+                crate::delivery_fallback::track_turn_prose(&mut self.turn_text, "tool_call", None);
+                if crate::delivery_fallback::tool_call_sends_message(title, update.get("rawInput"))
+                {
+                    self.turn_sent_message = true;
+                }
                 true
             }
             "tool_call_update" => {
