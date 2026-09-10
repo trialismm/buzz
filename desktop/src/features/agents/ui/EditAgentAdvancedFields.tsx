@@ -3,6 +3,8 @@ import { cn } from "@/shared/lib/cn";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
 import { EnvVarsEditor, type EnvVarsValue } from "./EnvVarsEditor";
+import { PERMISSION_MODE_ENV_KEY } from "@/features/agents/lib/permissionMode";
+import { PermissionModeField } from "./PermissionModeField";
 import {
   CARD_MINT_KEY_ANNOTATIONS,
   PERSONA_FIELD_CONTROL_CLASS,
@@ -118,11 +120,13 @@ export function EditAgentAdvancedFields({
     [catalogStatus, selectedRuntime],
   );
 
-  // Build the effective hidden-key list: caller's secrets + effort key (when
-  // rendered by BuzzAgentModelTuningFields) + numeric keys via structuredEnvKeys.
+  // Build the effective hidden-key list: caller's secrets + the permission
+  // mode key (owned by PermissionModeField below) + effort key (when rendered
+  // by BuzzAgentModelTuningFields) + numeric keys via structuredEnvKeys.
   const effectiveHiddenKeys = React.useMemo(
     () => [
       ...hiddenEnvKeys,
+      PERMISSION_MODE_ENV_KEY,
       ...(isBuzzAgentRuntime(modelTuningRuntimeId)
         ? [BUZZ_AGENT_THINKING_EFFORT]
         : []),
@@ -149,6 +153,12 @@ export function EditAgentAdvancedFields({
 
   return (
     <div className="space-y-5 pt-2">
+      <PermissionModeField
+        disabled={disabled}
+        envVars={envVars}
+        id="edit-agent-permission-mode"
+        onEnvVarsChange={onEnvVarsChange}
+      />
       {/* Inherit runtime from template */}
       {linkedPersona ? (
         <div className="space-y-1.5">

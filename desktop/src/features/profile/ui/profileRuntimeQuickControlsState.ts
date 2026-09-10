@@ -82,6 +82,21 @@ export function modelWriteTarget(
  * for them regardless of how the backend treats an absent field; `envVars` and
  * `behavior` are omitted on purpose — absent means "don't touch".
  */
+/**
+ * Full-record persona update that replaces only `envVars` (present = replace
+ * the stored map). Used by env-carried settings such as the permission mode so
+ * a linked agent's value lives on the definition, where its Edit dialog reads it.
+ */
+export function personaEnvVarsUpdateInput(
+  persona: AgentPersona,
+  envVars: Record<string, string>,
+): UpdatePersonaInput {
+  return {
+    ...personaModelUpdateInput(persona, persona.model),
+    envVars: { ...envVars },
+  };
+}
+
 export function personaModelUpdateInput(
   persona: AgentPersona,
   model: string | null,

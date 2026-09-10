@@ -71,6 +71,8 @@ import { useBakedBuildEnvKeysQuery, useRuntimeFileConfigQuery } from "../hooks";
 import { useAgentDialogDefaults } from "./useAgentDialogDefaults";
 import { AgentDefaultsDialog } from "./AgentDefaultsDialog";
 import { AgentHarnessField } from "./AgentHarnessField";
+import { PermissionModeField } from "./PermissionModeField";
+import { PERMISSION_MODE_ENV_KEY } from "@/features/agents/lib/permissionMode";
 import {
   AgentAiConfigurationModeField,
   AgentCreateAiDefaultsSummary,
@@ -946,6 +948,12 @@ export function AgentDefinitionDialog({
                   />
                 ) : null}
               </div>
+              <PermissionModeField
+                disabled={isPending}
+                envVars={envVars}
+                id="persona-permission-mode"
+                onEnvVarsChange={setEnvVars}
+              />
             </section>
           </div>
 
@@ -1004,9 +1012,10 @@ export function AgentDefinitionDialog({
                     disabled={isPending}
                     envVars={envVars}
                     fileSatisfiedEnvKeys={localModeGate.fileSatisfiedEnvKeys}
-                    hiddenEnvKeys={
-                      topLevelSecretEnvVar ? [topLevelSecretEnvVar] : []
-                    }
+                    hiddenEnvKeys={[
+                      PERMISSION_MODE_ENV_KEY,
+                      ...(topLevelSecretEnvVar ? [topLevelSecretEnvVar] : []),
+                    ]}
                     inheritedEnvVars={inheritedEnvVarsForAdvanced}
                     model={model}
                     modelTuningRuntimeId={runtime}

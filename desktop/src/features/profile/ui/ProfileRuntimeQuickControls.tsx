@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Gauge, Terminal } from "lucide-react";
+import { ChevronDown, Gauge, ShieldCheck, Terminal } from "lucide-react";
 import React from "react";
 import { toast } from "sonner";
 
@@ -12,6 +12,16 @@ import {
   useUpdatePersonaMutation,
 } from "@/features/agents/hooks";
 import { resolveModelLabel } from "@/features/agents/lib/formatAgentModelLabel";
+import {
+  HARNESS_DEFAULT_PERMISSION_MODE,
+  isLegacyPermissionMode,
+  parsePermissionMode,
+  permissionModeLabel,
+  readPermissionMode,
+  SELECTABLE_PERMISSION_MODES,
+  withPermissionMode,
+  type PermissionMode,
+} from "@/features/agents/lib/permissionMode";
 import {
   formatRuntimeOptionLabel,
   sortPersonaRuntimes,
@@ -36,6 +46,7 @@ import { Spinner } from "@/shared/ui/spinner";
 import {
   currentRuntimeEntry,
   modelWriteTarget,
+  personaEnvVarsUpdateInput,
   personaModelUpdateInput,
   type ProfileRuntimeQuickControlsState,
   restartNoticeFor,
@@ -128,6 +139,11 @@ export function ProfileRuntimeQuickControls({
         runtimes={runtimes}
       />
       <EffortQuickPicker agent={agent} notifySaved={notifySaved} />
+      <PermissionModePill
+        agent={agent}
+        notifySaved={notifySaved}
+        runtimes={runtimes}
+      />
     </div>
   );
 }
@@ -492,6 +508,145 @@ function EffortQuickPicker({
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * Permission mode for the agent's sessions, carried as
+ * `BUZZ_ACP_PERMISSION_MODE` on the instance env (the tier the edit dialog
+ * writes). Shows the configured value; when none is configured it shows what
+ * the running session reports, then the harness default.
+ */
+function PermissionModePill({
+  agent,
+  notifySaved,
+  runtimes,
+}: {
+  agent: ManagedAgent;
+  notifySaved: (what: string) => void;
+  runtimes: ReturnType<typeof useAcpRuntimesQuery>["data"] & object;
+}) {
+  const configSurface = useAgentConfigSurface(agent.pubkey);
+  const personasQuery = usePersonasQuery();
+  const updateAgent = useUpdateManagedAgentMutation();
+  const updatePersona = useUpdatePersonaMutation();
+  const persona = personasQuery.data?.find((p) => p.id === agent.personaId);
+  const target = modelWriteTarget(agent, persona);
+  // Same tier the agent's Edit dialog edits: the definition for a linked
+  // agent (its Edit opens the persona editor), the instance otherwise. The
+  // instance env still wins at spawn, so show it first when present.
+  const configured =
+    readPermissionMode(agent.envVars) ??
+    (target.kind === "persona"
+      ? readPermissionMode(target.persona.envVars)
+      : null);
+  const live = parsePermissionMode(configSurface.data?.normalized.mode?.value);
+  const shown: PermissionMode =
+    configured ?? live ?? HARNESS_DEFAULT_PERMISSION_MODE;
+  const displayLabel = permissionModeLabel(shown);
+  const saving = updateAgent.isPending || updatePersona.isPending;
+
+  const handlePick = async (value: string) => {
+    // "Run everything" is the harness default: store nothing rather than pin it.
+    const picked = parsePermissionMode(value);
+    const next = picked === "bypassPermissions" ? null : picked;
+    if (next === configured) return;
+    try {
+      if (target.kind === "unavailable") {
+        toast.error("The agent's persona hasn't loaded yet — try again.");
+        return;
+      }
+      if (target.kind === "persona") {
+        // Write the definition, then propagate exactly like the persona editor
+        // does; the propagation replaces the instance env, so a stale
+        // instance-level override cannot shadow the new value.
+        const updated = await updatePersona.mutateAsync(
+          personaEnvVarsUpdateInput(
+            target.persona,
+            withPermissionMode(target.persona.envVars, next),
+          ),
+        );
+        const agentUpdate = personaManagedAgentUpdate(agent, updated, {
+          previousPersona: target.persona,
+          runtimes,
+        });
+        if (agentUpdate) await updateAgent.mutateAsync(agentUpdate);
+      } else {
+        await updateAgent.mutateAsync({
+          pubkey: agent.pubkey,
+          envVars: withPermissionMode(agent.envVars, next),
+        });
+      }
+      notifySaved(`Permission mode ${permissionModeLabel(next)}`);
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Couldn't change the permission mode.",
+      );
+    }
+  };
+
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          aria-label={`Permission mode: ${displayLabel}`}
+          className={PILL_CLASS}
+          data-testid="user-profile-quick-permission"
+          disabled={saving}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          <PillIcon icon={ShieldCheck} />
+          <span className="truncate">{displayLabel}</span>
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className={MENU_CLASS}
+        onCloseAutoFocus={(event) => event.preventDefault()}
+      >
+        <DropdownMenuRadioGroup
+          onValueChange={(value) => void handlePick(value)}
+          value={shown}
+        >
+          {isLegacyPermissionMode(configured) && configured ? (
+            <DropdownMenuRadioItem className="items-start" value={configured}>
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span>{permissionModeLabel(configured)}</span>
+                <span className="text-2xs leading-snug text-muted-foreground">
+                  Behaves like Run everything under the harness.
+                </span>
+              </span>
+            </DropdownMenuRadioItem>
+          ) : null}
+          {SELECTABLE_PERMISSION_MODES.map((mode) => (
+            <DropdownMenuRadioItem
+              className="items-start"
+              key={mode.value}
+              value={mode.value}
+            >
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span>{mode.label}</span>
+                <span className="text-2xs leading-snug text-muted-foreground">
+                  {mode.description}
+                </span>
+              </span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <div className={MENU_NOTE_CLASS}>
+          Permission prompts are answered by the harness, not a person — these
+          are the only modes that differ.
+          {target.kind === "persona"
+            ? " Applies to every agent using this persona."
+            : null}
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );

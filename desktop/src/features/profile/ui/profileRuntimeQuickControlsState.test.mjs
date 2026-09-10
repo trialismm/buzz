@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   currentRuntimeEntry,
   modelWriteTarget,
+  personaEnvVarsUpdateInput,
   personaModelUpdateInput,
   profileRuntimeQuickControlsState,
   restartNoticeFor,
@@ -179,4 +180,29 @@ test("restartNoticeFor never claims an immediate restart", () => {
     });
     assert.equal(manual.kind, "manualRestart");
   }
+});
+
+test("personaEnvVarsUpdateInput keeps the model and replaces only envVars", () => {
+  const persona = {
+    id: "builtin:fizz",
+    displayName: "국산레이더",
+    avatarUrl: null,
+    description: "d",
+    systemPrompt: "p",
+    runtime: null,
+    model: "sonnet",
+    provider: null,
+    namePool: [],
+    envVars: { OLD: "1" },
+  };
+  const next = { BUZZ_ACP_PERMISSION_MODE: "acceptEdits" };
+  const input = personaEnvVarsUpdateInput(persona, next);
+  assert.equal(input.model, "sonnet");
+  assert.deepEqual(input.envVars, next);
+  assert.notEqual(input.envVars, next, "map is copied, not aliased");
+  assert.equal(
+    "behavior" in input,
+    false,
+    "behavior must stay absent (don't touch)",
+  );
 });

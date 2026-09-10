@@ -331,6 +331,30 @@ with a TypeScript lookup table or an id comparison in a component.
 
 17. **Databricks model discovery has one shared catalog authority.** Desktop and ACP call the shared `buzz-agent` discovery library; Desktop passes the effective merged `DATABRICKS_MODEL_FILTER` explicitly, and the library applies it to raw workspace endpoint IDs and Unity Catalog model-service FQNs after the additive union. A successful filtered-empty catalog is authoritative: it stays empty, disables switching, and never falls through to configured or known-model fallback. UC FQNs retain neutral effort capabilities. A boundary-matched GPT-5-or-newer family in the service-name component selects OpenAI Responses so tools can coexist with reasoning; other FQNs use MLflow Chat Completions. Catalog/schema components never influence routing. Keep this route-only rule identical in the Rust and TypeScript capability interpreters. Global Defaults preserves the discovered model ID as the selected value while its closed trigger renders the provider-scoped display label; do not force the raw persisted ID over that label.
 
+18. **Permission mode is an env-carried harness policy with one vocabulary
+    owner.** `buzz-acp` reads `BUZZ_ACP_PERMISSION_MODE` at spawn; Desktop
+    stores it as an ordinary (deliberately non-reserved) env var so the
+    existing env tiers, spawn snapshot / restart badge, and create/update IPC
+    carry it without a record column. `lib/permissionMode.ts` is the only
+    module that knows the key and the values (ACP spelling; `buzz-acp` accepts
+    them as clap aliases). Pickers offer exactly three
+    (`SELECTABLE_PERMISSION_MODES`: Run everything = unset, Read-only =
+    `dontAsk`, Plan only = `plan`) because buzz-acp auto-approves every
+    permission prompt (`handle_permission_request` → `allow_once`), which
+    collapses `default` / `acceptEdits` / `auto` into Run everything; those
+    stay parseable and render as legacy until replaced — UI reads/writes through `readPermissionMode` /
+    `withPermissionMode`, never a raw string. Surfaces: `PermissionModeField`
+    in the create dialog's Configurations column (persona env, definition
+    tier), the instance edit dialog's Advanced section via
+    `EditAgentAdvancedFields` (instance env, wins at spawn), and the profile
+    hero pill, which writes the tier that agent's Edit button edits — the
+    persona env for a linked agent (then propagates like the persona editor),
+    the instance env otherwise — so the two surfaces never disagree. The raw env editor hides the key so the value has one owner per
+    surface. Display shows the configured value, else the live session `mode`
+    the config surface reports, else the harness default — never a synthesized
+    per-harness guess. It is not a `KnownAcpRuntime` capability: the same
+    values apply to every harness `buzz-acp` drives.
+
 ## Channel-only runtime controls
 
 Desktop observer controls identify a channel, not a thread session. The harness
