@@ -30,6 +30,12 @@ import {
   effortPickerState,
   effortSelectionToPersistedValue,
 } from "@/features/agents/ui/effortPicker";
+import {
+  effortOptionsKey,
+  rememberEffortOptions,
+  resolveEffortOptionsSource,
+  useCachedEffortOptions,
+} from "@/features/agents/lib/effortOptionsCache";
 import { useManagedAgentRuntimeAction } from "@/features/agents/managedAgentRuntimeHooks";
 import { getAgentModels } from "@/shared/api/tauri";
 import type { AgentModelsResponse, ManagedAgent } from "@/shared/api/types";
@@ -444,15 +450,34 @@ function EffortQuickPicker({
   // Canonical effort = what the next spawn launches with (rule 14's first fact).
   const currentEffort =
     configSurface.data?.normalized.thinkingEffort?.value ?? null;
+  // Options are a property of harness + model, so a snapshot from an earlier
+  // session stands in before the first session / after a restart.
+  const cacheKey = effortOptionsKey(
+    agent.agentCommand,
+    configSurface.data?.normalized.model?.value,
+  );
+  const cached = useCachedEffortOptions(cacheKey);
+  const liveConfigId = configSurface.data?.effortConfigId;
+  const liveOptions = configSurface.data?.effortOptions;
+  React.useEffect(() => {
+    if (liveConfigId !== undefined && liveOptions && liveOptions.length > 0) {
+      rememberEffortOptions(cacheKey, liveConfigId, liveOptions);
+    }
+  }, [cacheKey, liveConfigId, liveOptions]);
+  const effortSource = resolveEffortOptionsSource({
+    live: { configId: liveConfigId, options: liveOptions },
+    cached,
+  });
   const { visible, options, selectValue } = effortPickerState({
     backend: agent.backend,
-    effortConfigId: configSurface.data?.effortConfigId,
-    effortOptions: configSurface.data?.effortOptions,
+    effortConfigId: effortSource.configId,
+    effortOptions: effortSource.options,
     currentEffort,
   });
   if (!visible) {
     return null;
   }
+  const fromCache = effortSource.source === "cache";
 
   const displayLabel =
     options.find((option) => option.value === selectValue)?.label ??
@@ -480,11 +505,16 @@ function EffortQuickPicker({
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <Button
-          aria-label={`Thinking effort: ${displayLabel}`}
+          aria-label={`Thinking effort: ${displayLabel}${fromCache ? " (options from the last session)" : ""}`}
           className={PILL_CLASS}
           data-testid="user-profile-quick-effort"
           disabled={updateMutation.isPending}
           size="sm"
+          title={
+            fromCache
+              ? "Options remembered from this model's last session; applies at the next start."
+              : undefined
+          }
           type="button"
           variant="ghost"
         >
