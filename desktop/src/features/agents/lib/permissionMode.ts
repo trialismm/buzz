@@ -23,6 +23,13 @@ export const PERMISSION_MODE_ENV_KEY = "BUZZ_ACP_PERMISSION_MODE";
 /** What the harness uses when the env var is absent. */
 export const HARNESS_DEFAULT_PERMISSION_MODE = "bypassPermissions";
 
+/**
+ * Message tag the owner puts on a channel message to set the mode the
+ * mentioned agents run under from that turn on (`buzz_core::observer::
+ * PERMISSION_MODE_TAG`). The harness ignores it on non-owner messages.
+ */
+export const PERMISSION_MODE_TAG = "buzz:permission-mode";
+
 export type PermissionMode =
   | "default"
   | "auto"
@@ -144,4 +151,13 @@ export function withPermissionMode(
 export function permissionModeLabel(mode: PermissionMode | null): string {
   if (mode === null) return "Harness default";
   return PERMISSION_MODES.find((m) => m.value === mode)?.label ?? mode;
+}
+
+/** The outgoing message tag carrying `mode` (see `PERMISSION_MODE_TAG`). */
+export function buildPermissionModeTag(mode: PermissionMode): string[] {
+  return [PERMISSION_MODE_TAG, mode];
+}
+
+export function isPermissionModeTag(tag: readonly string[]): boolean {
+  return tag[0] === PERMISSION_MODE_TAG;
 }

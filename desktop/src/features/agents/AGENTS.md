@@ -341,7 +341,12 @@ with a TypeScript lookup table or an id comparison in a component.
     (`SELECTABLE_PERMISSION_MODES`: Run everything = unset, Read-only =
     `dontAsk`, Plan only = `plan`) because buzz-acp auto-approves every
     permission prompt (`handle_permission_request` → `allow_once`), which
-    collapses `default` / `acceptEdits` / `auto` into Run everything; those
+    collapses `default` / `acceptEdits` / `auto` into Run everything. For the
+    two read-only modes the harness marks the session read-only
+    (`AcpClient::set_session_read_only`) and rejects every prompt except the
+    agent's own `buzz` CLI calls, so they hold even though the adapter forwards
+    prompts to the harness (Claude Code's plan mode asks before writes; an
+    approving client would let them through). Those
     stay parseable and render as legacy until replaced — UI reads/writes through `readPermissionMode` /
     `withPermissionMode`, never a raw string. Surfaces: `PermissionModeField`
     in the create dialog's Configurations column (persona env, definition
@@ -353,14 +358,29 @@ with a TypeScript lookup table or an id comparison in a component.
     surface. Display shows the configured value, else the live session `mode`
     the config surface reports, else the harness default — never a synthesized
     per-harness guess. It is not a `KnownAcpRuntime` capability: the same
-    values apply to every harness `buzz-acp` drives.
+    values apply to every harness `buzz-acp` drives. A fourth, chat-level tier
+    sits above all of these: the composer's Permission mode pill
+    (`ComposerPermissionModePill`, shown only when the channel has a locally
+    managed agent) stores a per-channel pick (`composerPermissionMode.ts`,
+    localStorage) and every message sent from that channel carries it as the
+    `buzz:permission-mode` tag (`PERMISSION_MODE_TAG`, appended at the
+    `MessageComposer` send seam, routed by `splitOutgoingTags`, validated by the
+    Tauri backend). The harness reads the tag off the owner's newest message in
+    the batch, records it on its `PromptContext` per channel and applies it at
+    that turn's `session/new` (rotating the session when the mode changed);
+    non-owner tags are ignored. Precedence is session > instance env > persona
+    env > harness default (`resolveSessionPermissionMode`). The pill's
+    baseline label is the addressed (else first) local agent's configured
+    mode. The override is runtime-only on the harness — it forgets it on
+    restart — and is never persisted to any env tier. The harness also accepts
+    an equivalent `switch_mode` observer control; the Desktop has no UI for it.
 
 ## Channel-only runtime controls
 
 Desktop observer controls identify a channel, not a thread session. The harness
-rejects `cancel_turn` and `switch_model` with `ambiguous_target` when that channel
-has multiple known session scopes, including retained idle scopes. Do not treat
-that result as success or a deferred model switch. Stop feedback waits for the
+rejects `cancel_turn`, `switch_model`, and `switch_mode` with `ambiguous_target`
+when that channel has multiple known session scopes, including retained idle
+scopes. Do not treat that result as success or a deferred switch. Stop feedback waits for the
 harness result matching the control type, channel, and request ID; relay delivery
 alone does not prove that a turn was signalled. A missing result is unconfirmed,
 not success. The activity pane must use its resolved `sessionChannelId` for

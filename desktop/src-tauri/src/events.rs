@@ -15,7 +15,8 @@ use uuid::Uuid;
 mod message_tags;
 
 use message_tags::{
-    append_client_tags, append_sent_from_thread_tag, emoji_tags, imeta_tags, mention_reference_tags,
+    append_client_tags, append_permission_mode_tag, append_sent_from_thread_tag, emoji_tags,
+    imeta_tags, mention_reference_tags,
 };
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -259,6 +260,7 @@ pub fn build_message(
     mention_ref_tags: &[Vec<String>],
     link_preview_tags: &[Vec<String>],
     sent_from_thread_tag: Option<&[String]>,
+    permission_mode_tag: Option<&[String]>,
     relay_base: &str,
 ) -> Result<EventBuilder, String> {
     build_message_with_client_tags(
@@ -271,6 +273,7 @@ pub fn build_message(
         mention_ref_tags,
         link_preview_tags,
         sent_from_thread_tag,
+        permission_mode_tag,
         relay_base,
         &[],
     )
@@ -292,6 +295,7 @@ pub fn build_message_with_client_tags(
     mention_ref_tags: &[Vec<String>],
     link_preview_tags: &[Vec<String>],
     sent_from_thread_tag: Option<&[String]>,
+    permission_mode_tag: Option<&[String]>,
     relay_base: &str,
     client_tags: &[Vec<String>],
 ) -> Result<EventBuilder, String> {
@@ -309,6 +313,7 @@ pub fn build_message_with_client_tags(
     mention_reference_tags(mention_ref_tags, &mut tags)?;
     crate::link_preview_tags::append(link_preview_tags, relay_base, &mut tags)?;
     append_sent_from_thread_tag(sent_from_thread_tag, &mut tags)?;
+    append_permission_mode_tag(permission_mode_tag, &mut tags)?;
     append_client_tags(client_tags, &mut tags)?;
     Ok(EventBuilder::new(Kind::Custom(9), content).tags(tags))
 }

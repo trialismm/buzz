@@ -416,6 +416,7 @@ pub async fn send_channel_message(
     mention_tags: Option<Vec<Vec<String>>>,
     link_preview_tags: Option<Vec<Vec<String>>>,
     sent_from_thread_tag: Option<Vec<String>>,
+    permission_mode_tag: Option<Vec<String>>,
     mention_pubkeys: Option<Vec<String>>,
     kind: Option<u32>,
     expected_relay_url: Option<String>,
@@ -513,6 +514,7 @@ pub async fn send_channel_message(
                 &mention_refs_only,
                 &link_previews,
                 sent_from_thread_tag.as_deref(),
+                permission_mode_tag.as_deref(),
                 &relay_base,
             )?
         }
@@ -687,6 +689,7 @@ fn build_managed_agent_channel_message(
         &[],
         &[],
         &[],
+        None,
         None,
         &crate::relay::relay_api_base_url(),
         client_tags,

@@ -458,9 +458,11 @@ export type SwitchManagedAgentModelStatus =
   | "failure";
 
 export type ControlResultFrame = {
-  type: "cancel_turn" | "switch_model";
+  type: "cancel_turn" | "switch_model" | "switch_mode";
   status: string;
   modelId?: string;
+  /** Permission mode echoed from a harness `switch_mode` control (ACP spelling). */
+  mode?: string;
   /** Opaque per-pick id echoed from the request; correlates late frames. */
   requestId?: string;
   /** Buzz channel UUID from the observer envelope; disambiguates channels. */

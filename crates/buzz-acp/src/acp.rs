@@ -160,6 +160,11 @@ pub struct AcpClient {
     /// Guards against double-response if a timeout fires after the allow_once
     /// response was written but before `pending_permission_id` was cleared.
     permission_responded: bool,
+    /// Sessions running under a read-only permission mode (`plan`, `dontAsk`):
+    /// every `session/request_permission` for them is rejected except the
+    /// agent's own `buzz` CLI calls (its reply channel). Enforced here because
+    /// the adapter forwards prompts to us and we would otherwise approve them.
+    read_only_sessions: std::collections::HashSet<String>,
     /// The JSON-RPC id of the most recently sent `session/prompt` request.
     /// Used by [`cancel_with_cleanup`] to drain the correct response.
     /// Set in [`session_prompt_with_idle_timeout`]; consumed in [`cancel_with_cleanup`].
@@ -196,6 +201,9 @@ pub struct AcpClient {
     /// True once a `tool_call` in the current turn ran `buzz messages send`
     /// (the agent delivered its own reply). Reset when a prompt starts.
     turn_sent_message: bool,
+    /// Plan written by a plan-mode turn (`~/.claude/plans/*.md` Write), so a
+    /// refused `ExitPlanMode` can still surface the plan in the channel.
+    turn_plan_text: Option<String>,
     /// Reply destination captured for the in-flight turn (see
     /// `delivery_fallback`). `None` for heartbeats.
     delivery_probe: Option<crate::delivery_fallback::DeliveryProbe>,
@@ -562,6 +570,7 @@ impl AcpClient {
             next_id: 0,
             pending_permission_id: None,
             permission_responded: false,
+            read_only_sessions: std::collections::HashSet::new(),
             last_prompt_id: None,
             current_hard_deadline: None,
             observer: None,
@@ -570,6 +579,7 @@ impl AcpClient {
             active_run_id: None,
             turn_text: String::new(),
             turn_sent_message: false,
+            turn_plan_text: None,
             delivery_probe: None,
             steering_supported: false,
             steer_rx: None,
@@ -799,6 +809,7 @@ impl AcpClient {
         // aborted) turn.
         self.turn_text.clear();
         self.turn_sent_message = false;
+        self.turn_plan_text = None;
         let hard_deadline = tokio::time::Instant::now() + max_duration;
         self.current_hard_deadline = Some(hard_deadline);
 
@@ -954,6 +965,11 @@ impl AcpClient {
     /// Whether the last turn ran `buzz messages send` itself; resets the flag.
     pub fn take_turn_sent_message(&mut self) -> bool {
         std::mem::take(&mut self.turn_sent_message)
+    }
+
+    /// The plan the last turn wrote to the plans directory, if any.
+    pub fn take_turn_plan_text(&mut self) -> Option<String> {
+        self.turn_plan_text.take()
     }
 
     /// Remember where this turn's human-facing reply must land.
@@ -1818,6 +1834,11 @@ impl AcpClient {
                 {
                     self.turn_sent_message = true;
                 }
+                if let Some(plan) =
+                    crate::delivery_fallback::plan_file_content(update.get("rawInput"))
+                {
+                    self.turn_plan_text = Some(plan);
+                }
                 true
             }
             "tool_call_update" => {
@@ -1971,9 +1992,22 @@ impl AcpClient {
         }
     }
 
-    /// Auto-approve a `session/request_permission` request from the agent.
+    /// Mark `session_id` as read-only (or not). Read-only sessions have every
+    /// permission prompt rejected except `buzz` CLI calls, so `plan` /
+    /// `dontAsk` hold even when the adapter would have let us approve.
+    pub fn set_session_read_only(&mut self, session_id: &str, read_only: bool) {
+        if read_only {
+            self.read_only_sessions.insert(session_id.to_string());
+        } else {
+            self.read_only_sessions.remove(session_id);
+        }
+    }
+
+    /// Answer a `session/request_permission` request from the agent.
     ///
-    /// Finds the option with `kind == "allow_once"` and responds with its `optionId`.
+    /// Read-only sessions (see [`Self::set_session_read_only`]) reject every
+    /// prompt except the agent's own `buzz` CLI calls; otherwise finds the
+    /// option with `kind == "allow_once"` and responds with its `optionId`.
     /// If no `allow_once` option exists, falls back to `reject_once`.
     ///
     /// **Critical:** Never hardcode `optionId` — always find it dynamically by `kind`.
@@ -2002,10 +2036,22 @@ impl AcpClient {
             options.len()
         );
 
+        let session_id = msg["params"]["sessionId"].as_str().unwrap_or("");
+        let tool_call = &msg["params"]["toolCall"];
+        let tool_title = tool_call
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        let read_only = self.read_only_sessions.contains(session_id)
+            && !tool_call_is_buzz_cli(tool_title, tool_call.get("rawInput"));
         // Find allow_once by kind — NEVER hardcode optionId.
-        let allow_once = options
-            .iter()
-            .find(|opt| opt.get("kind").and_then(|k| k.as_str()) == Some("allow_once"));
+        let allow_once = if read_only {
+            None
+        } else {
+            options
+                .iter()
+                .find(|opt| opt.get("kind").and_then(|k| k.as_str()) == Some("allow_once"))
+        };
 
         let response = if let Some(opt) = allow_once {
             let option_id = opt["optionId"]
@@ -2017,11 +2063,32 @@ impl AcpClient {
             );
             permission_response_selected(&id, option_id)
         } else {
-            // No allow_once — fall back to reject_once.
-            tracing::warn!(
-                target: "acp::permission",
-                "no allow_once option found in permission request id={id}, falling back to reject_once"
-            );
+            if read_only {
+                tracing::info!(
+                    "rejecting permission id={id} for read-only session {session_id}: {}",
+                    if tool_title.is_empty() {
+                        "tool call"
+                    } else {
+                        tool_title
+                    }
+                );
+                // A refused `ExitPlanMode` carries the plan itself; keep it so
+                // the turn-end fallback can post it when the agent stays silent.
+                if let Some(plan) = tool_call
+                    .get("rawInput")
+                    .and_then(|raw| raw.get("plan"))
+                    .and_then(|plan| plan.as_str())
+                    .filter(|plan| !plan.trim().is_empty())
+                {
+                    self.turn_plan_text = Some(plan.to_string());
+                }
+            } else {
+                // No allow_once — fall back to reject_once.
+                tracing::warn!(
+                    target: "acp::permission",
+                    "no allow_once option found in permission request id={id}, falling back to reject_once"
+                );
+            }
             let reject = options
                 .iter()
                 .find(|opt| opt.get("kind").and_then(|k| k.as_str()) == Some("reject_once"));
@@ -2152,6 +2219,20 @@ fn steer_prompt_blocks(prompt_blocks: &[&str]) -> Vec<serde_json::Value> {
 }
 
 /// Build a JSON-RPC permission response with `outcome: "selected"`.
+/// Is this tool call the agent's own `buzz` CLI (reads, `buzz messages send`)?
+/// The adapter titles Bash calls with the command and mirrors it in
+/// `rawInput.command`. Read-only sessions still let these through: they are
+/// how the agent talks, not workspace mutations.
+pub(crate) fn tool_call_is_buzz_cli(title: &str, raw_input: Option<&serde_json::Value>) -> bool {
+    let command = raw_input
+        .and_then(|v| v.get("command"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    [command, title]
+        .iter()
+        .any(|text| text.trim_start().starts_with("buzz "))
+}
+
 fn permission_response_selected(id: &serde_json::Value, option_id: &str) -> serde_json::Value {
     serde_json::json!({
         "jsonrpc": "2.0",
@@ -5075,5 +5156,84 @@ mod tests {
             msg.contains("sandbox_workspace_write"),
             "error must mention sandbox_workspace_write"
         );
+    }
+
+    #[test]
+    fn tool_call_is_buzz_cli_matches_the_command_prefix_only() {
+        let raw = serde_json::json!({"command": "buzz messages send --channel x 'hi'"});
+        assert!(tool_call_is_buzz_cli("Bash", Some(&raw)));
+        assert!(tool_call_is_buzz_cli(
+            "buzz --format compact messages thread --link x",
+            None
+        ));
+        assert!(tool_call_is_buzz_cli("  buzz channels list", None));
+        let write = serde_json::json!({"file_path": "/tmp/x.md", "content": "buzz messages send"});
+        assert!(!tool_call_is_buzz_cli("Write", Some(&write)));
+        let shell = serde_json::json!({"command": "echo hi && buzz messages send x"});
+        assert!(!tool_call_is_buzz_cli("Bash", Some(&shell)));
+        assert!(!tool_call_is_buzz_cli("rm -rf /tmp/buzz ", None));
+    }
+
+    /// Binds the production seam: `handle_permission_request` itself must
+    /// pick `reject_once` for a read-only session (removing the guard fails
+    /// this test), while `buzz` CLI calls, other sessions, and a session
+    /// switched back to read-write are still approved.
+    #[tokio::test]
+    async fn read_only_session_rejects_prompts_except_buzz_cli() {
+        use futures_util::StreamExt;
+        let mut client = spawn_inert_client().await;
+        client.set_session_read_only("s-ro", true);
+        let request = |id: u64, session: &str, title: &str, command: Option<&str>| {
+            let raw_input = command.map(|c| serde_json::json!({"command": c}));
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "session/request_permission",
+                "params": {
+                    "sessionId": session,
+                    "toolCall": {"toolCallId": "t", "title": title, "rawInput": raw_input},
+                    "options": [
+                        {"optionId": "opt-allow", "name": "Allow", "kind": "allow_once"},
+                        {"optionId": "opt-reject", "name": "Reject", "kind": "reject_once"},
+                    ],
+                },
+            })
+        };
+        let cases = [
+            (request(1, "s-ro", "Write", None), "opt-reject"),
+            (
+                request(2, "s-ro", "Bash", Some("touch /tmp/x")),
+                "opt-reject",
+            ),
+            (
+                request(
+                    3,
+                    "s-ro",
+                    "Bash",
+                    Some("buzz messages send --channel c 'hi'"),
+                ),
+                "opt-allow",
+            ),
+            (request(4, "s-rw", "Write", None), "opt-allow"),
+        ];
+        for (msg, expected) in cases {
+            client.handle_permission_request(&msg).await.unwrap();
+            let line = client.reader.next().await.unwrap().unwrap();
+            let response: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["id"], msg["id"]);
+            assert_eq!(
+                response["result"]["outcome"]["optionId"], expected,
+                "{}",
+                msg["params"]["toolCall"]["title"]
+            );
+        }
+        client.set_session_read_only("s-ro", false);
+        client
+            .handle_permission_request(&request(5, "s-ro", "Write", None))
+            .await
+            .unwrap();
+        let line = client.reader.next().await.unwrap().unwrap();
+        let response: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(response["result"]["outcome"]["optionId"], "opt-allow");
     }
 }

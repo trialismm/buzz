@@ -28,6 +28,7 @@ import { useProfileQuery, useUsersBatchQuery } from "@/features/profile/hooks";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { addChannelMembers } from "@/shared/api/tauri";
 import { sendChannelMessage } from "@/shared/api/tauriMessages";
+import { splitOutgoingTags } from "@/features/messages/lib/imetaMediaMarkdown";
 import type { Channel } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { normalizePubkey } from "@/shared/lib/pubkey";
@@ -190,21 +191,27 @@ export function ProjectAgentChatPanel({
           signerScope: identityQuery.data?.pubkey ?? null,
           startAgent: (input) => startAgentMutation.mutateAsync(input),
           openDm: (input) => openDmMutation.mutateAsync(input),
-          send: (request) =>
-            sendChannelMessage(
+          send: (request) => {
+            // The composer's outgoing bag mixes imeta, emoji, mention and
+            // permission-mode tags; the backend validates each on its own arg.
+            const tags = splitOutgoingTags(request.mediaTags);
+            return sendChannelMessage(
               request.channelId,
               request.content,
               request.parentEventId,
-              request.mediaTags,
+              tags.mediaTags,
               request.mentionPubkeys,
               undefined,
-              undefined,
-              undefined,
-              undefined,
+              tags.emojiTags,
+              tags.mentionTags,
+              tags.linkPreviewTags,
               undefined,
               request.expectedRelayUrl,
               request.expectedSignerPubkey,
-            ),
+              undefined,
+              tags.permissionModeTag,
+            );
+          },
         });
         if (!conversation) {
           // Anchor the conversation to the exact accepted opener event: a
@@ -316,6 +323,7 @@ export function ProjectAgentChatPanel({
           isSending={isSending}
           layoutMode="standalone"
           onSend={handleSubmit}
+          permissionModeAgentPubkey={selectedAgent?.pubkey ?? null}
           placeholder={
             selectedAgent
               ? `Message ${selectedAgent.name}`

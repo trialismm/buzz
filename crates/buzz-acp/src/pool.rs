@@ -838,6 +838,56 @@ pub struct PromptContext {
     /// the desktop keys per (agent, relay) pair, e.g. `session_config_captured`,
     /// mirroring the `managed_agent_runtime_lifecycle` frames.
     pub relay_url: String,
+    /// Chat-level permission overrides set live from the Desktop via the
+    /// `switch_mode` observer control, keyed by channel. Wins over
+    /// `permission_mode` for that channel's sessions. Runtime-only — never
+    /// persisted, gone on restart/respawn (the env/persona tier then applies).
+    pub live_permission_modes: Mutex<HashMap<Uuid, PermissionMode>>,
+    /// Channels whose next turn must rotate its session so the new mode is
+    /// applied at `session/new`. A live switch never interrupts an in-flight
+    /// turn; it takes effect from the channel's next turn.
+    pub pending_permission_rotations: Mutex<HashSet<Uuid>>,
+}
+
+impl PromptContext {
+    /// The permission mode a fresh session for `channel_id` must run under:
+    /// the live override when one is recorded, else the spawn-time mode.
+    /// Heartbeat sessions (`None`) always use the spawn-time mode.
+    pub fn effective_permission_mode(&self, channel_id: Option<Uuid>) -> PermissionMode {
+        channel_id
+            .and_then(|cid| {
+                self.live_permission_modes
+                    .lock()
+                    .ok()
+                    .and_then(|modes| modes.get(&cid).copied())
+            })
+            .unwrap_or(self.permission_mode)
+    }
+
+    /// Record a live override for `channel_id`. Arms a session rotation when
+    /// the effective mode actually changes so the next turn re-creates the
+    /// session under the new mode; a no-op pick leaves the session alone.
+    /// Returns whether the effective mode changed.
+    pub fn set_live_permission_mode(&self, channel_id: Uuid, mode: PermissionMode) -> bool {
+        let changed = self.effective_permission_mode(Some(channel_id)) != mode;
+        if let Ok(mut modes) = self.live_permission_modes.lock() {
+            modes.insert(channel_id, mode);
+        }
+        if changed {
+            if let Ok(mut pending) = self.pending_permission_rotations.lock() {
+                pending.insert(channel_id);
+            }
+        }
+        changed
+    }
+
+    /// Consume the pending rotation for `channel_id`, if any.
+    pub fn take_pending_permission_rotation(&self, channel_id: Uuid) -> bool {
+        self.pending_permission_rotations
+            .lock()
+            .map(|mut pending| pending.remove(&channel_id))
+            .unwrap_or(false)
+    }
 }
 
 impl AgentPool {
@@ -1691,6 +1741,28 @@ async fn create_session_and_apply_model(
     // carries the pre-set `currentValue`, so patch the applied option to the
     // value the session is actually running. A rejected effort or a model with
     // no `thought_level` option leaves the snapshot untouched.
+    // Apply the channel's effective permission mode — the live override set
+    // from the Desktop `switch_mode` control, else the spawn-time
+    // `--permission-mode` — if it is not the agent's built-in default AND the
+    // agent advertises it in session/new. Agents that don't support the mode
+    // (e.g., goose crashes on unrecognized set_config_option values) are safely
+    // skipped — the harness auto-approves via handle_permission_request. Runs
+    // BEFORE the capture emission so the cached `mode` option tells the truth.
+    let permission_mode =
+        ctx.effective_permission_mode(channel.scope.map(|scope| scope.channel_id()));
+    let permission_mode_applied = !permission_mode.is_default()
+        && agent_supports_mode(&resp.raw, permission_mode.as_wire_str())
+        && apply_permission_mode(&mut agent.acp, &resp.session_id, &permission_mode).await?;
+    // Harness-side enforcement, independent of adapter support: read-only
+    // modes reject every permission prompt the adapter forwards (the harness
+    // would otherwise auto-approve them, making "Plan only" a suggestion).
+    agent.acp.set_session_read_only(
+        &resp.session_id,
+        matches!(
+            permission_mode,
+            PermissionMode::Plan | PermissionMode::DontAsk
+        ),
+    );
     let config_options_for_cache = {
         let mut opts = effort_snapshot
             .get("configOptions")
@@ -1698,6 +1770,9 @@ async fn create_session_and_apply_model(
             .unwrap_or(serde_json::Value::Null);
         if let Some(StartupEffortOutcome::Applied { config_id, value }) = &effort_outcome {
             patch_config_option_current_value(&mut opts, config_id, value);
+        }
+        if permission_mode_applied {
+            patch_config_option_current_value(&mut opts, "mode", permission_mode.as_wire_str());
         }
         opts
     };
@@ -1720,16 +1795,6 @@ async fn create_session_and_apply_model(
             "relayUrl": ctx.relay_url,
         }),
     );
-
-    // Apply permission mode if not the agent's built-in default AND the agent
-    // advertises the requested mode in session/new. Agents that don't support
-    // the mode (e.g., goose crashes on unrecognized set_config_option values)
-    // are safely skipped — the harness auto-approves via handle_permission_request.
-    if !ctx.permission_mode.is_default()
-        && agent_supports_mode(&resp.raw, ctx.permission_mode.as_wire_str())
-    {
-        apply_permission_mode(&mut agent.acp, &resp.session_id, &ctx.permission_mode).await?;
-    }
 
     Ok(resp.session_id)
 }
@@ -1999,11 +2064,15 @@ fn agent_supports_mode(session_new_result: &serde_json::Value, mode_wire: &str) 
 ///
 /// **Fatal exception:** if the agent process exits (e.g., goose crashes on
 /// unrecognized methods), returns `Err(AgentExited)` so the caller can respawn.
+///
+/// Returns `Ok(true)` when the mode landed, `Ok(false)` when the agent
+/// rejected it (the session keeps its default; per-tool auto-approval covers
+/// it), and `Err` on transport failures that leave the stream unusable.
 async fn apply_permission_mode(
     acp: &mut AcpClient,
     session_id: &str,
     mode: &PermissionMode,
-) -> Result<(), AcpError> {
+) -> Result<bool, AcpError> {
     let wire = mode.as_wire_str();
     let result = tokio::time::timeout(PERMISSION_MODE_TIMEOUT, async {
         acp.session_set_config_option(session_id, "mode", wire)
@@ -2013,10 +2082,8 @@ async fn apply_permission_mode(
 
     match result {
         Ok(Ok(_)) => {
-            tracing::info!(
-                target: "pool::permission",
-                "applied permission mode {wire:?} on session {session_id}"
-            );
+            tracing::info!("applied permission mode {wire:?} on session {session_id}");
+            return Ok(true);
         }
         // Transport-class errors may have corrupted the stdio stream — propagate
         // so the caller can respawn the agent.
@@ -2025,29 +2092,24 @@ async fn apply_permission_mode(
         | Ok(Err(e @ AcpError::Timeout(_)))
         | Ok(Err(e @ AcpError::Protocol(_)))
         | Ok(Err(e @ AcpError::AgentExited)) => {
-            tracing::error!(
-                target: "pool::permission",
-                "fatal error setting permission mode {wire:?}: {e}"
-            );
+            tracing::error!("fatal error setting permission mode {wire:?}: {e}");
             return Err(e);
         }
         // Application-level errors — agent is fine, just uses default permission mode.
         Ok(Err(e)) => {
             tracing::warn!(
-                target: "pool::permission",
                 "failed to set permission mode {wire:?}: {e} — falling back to per-tool auto-approval"
             );
         }
         Err(_) => {
             // Outer timeout fired — stream may be in unknown state.
             tracing::error!(
-                target: "pool::permission",
                 "permission mode set timed out ({PERMISSION_MODE_TIMEOUT:?}) — treating as fatal"
             );
             return Err(AcpError::Timeout(PERMISSION_MODE_TIMEOUT));
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Prepend a legacy agent's standing context to a user-message body.
@@ -2440,6 +2502,29 @@ pub async fn run_prompt_task(
     let mut origin_channel_type: Option<String> = None;
     if let PromptSource::Channel(scope) = &source {
         let cid = scope.channel_id();
+        // The owner can set the mode on the message itself (Desktop composer
+        // pill → `buzz:permission-mode` tag); it is recorded like a live
+        // `switch_mode` control and lands on this very turn.
+        if let Some(mode) = batch.as_ref().and_then(|b| {
+            crate::queue::permission_mode_for_batch(b, ctx.agent_owner_pubkey.as_ref())
+        }) {
+            if ctx.set_live_permission_mode(cid, mode) {
+                tracing::info!(
+                    channel = %cid,
+                    mode = %mode,
+                    "permission mode set by the owner's message tag"
+                );
+            }
+        }
+        // A live permission-mode switch lands here, on the channel's next
+        // turn: drop the old session so `create_session_and_apply_model`
+        // re-creates it under the effective mode. Never interrupts a turn.
+        if ctx.take_pending_permission_rotation(cid) && agent.state.invalidate_scope(scope) {
+            tracing::info!(
+                "rotating session for channel {cid} to apply live permission mode {}",
+                ctx.effective_permission_mode(Some(cid))
+            );
+        }
         let is_new_channel_session = !agent.state.sessions.contains_key(scope);
         let needs_canvas =
             is_new_channel_session && !agent.state.canvas_sections.contains_key(scope);
@@ -4693,19 +4778,19 @@ fn log_stop_reason(source: &PromptSource, stop_reason: &StopReason) {
     let label = prompt_label(source);
     match stop_reason {
         StopReason::EndTurn => {
-            tracing::info!(target: "pool::prompt", "turn complete for {label}: end_turn");
+            tracing::info!("turn complete for {label}: end_turn");
         }
         StopReason::Cancelled => {
-            tracing::warn!(target: "pool::prompt", "turn cancelled for {label}");
+            tracing::warn!("turn cancelled for {label}");
         }
         StopReason::MaxTokens => {
-            tracing::warn!(target: "pool::prompt", "turn hit max_tokens for {label} — session will be rotated");
+            tracing::warn!("turn hit max_tokens for {label} — session will be rotated");
         }
         StopReason::MaxTurnRequests => {
-            tracing::warn!(target: "pool::prompt", "turn hit max_turn_requests for {label} — session will be rotated");
+            tracing::warn!("turn hit max_turn_requests for {label} — session will be rotated");
         }
         StopReason::Refusal => {
-            tracing::warn!(target: "pool::prompt", "turn refused for {label}");
+            tracing::warn!("turn refused for {label}");
         }
     }
 }
@@ -5364,7 +5449,7 @@ async fn clear_reactions(rest: crate::relay::RestClient, event_ids: Vec<String>)
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Tag, Timestamp};
     use serde_json::json;
@@ -9231,7 +9316,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
         );
     }
 
-    pub(super) fn make_prompt_context_no_owner() -> PromptContext {
+    pub(crate) fn make_prompt_context_no_owner() -> PromptContext {
         let agent_keys = nostr::Keys::generate();
         make_prompt_context_impl(&agent_keys, None)
     }
@@ -9284,6 +9369,8 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             memory_enabled: false,
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
+            live_permission_modes: Mutex::new(HashMap::new()),
+            pending_permission_rotations: Mutex::new(HashSet::new()),
         }
     }
 
@@ -11238,5 +11325,59 @@ done"#
             cap["configOptions"].is_null(),
             "an optionless switch caches the target's (empty) options, never the pre-switch model-a options with a patched effort"
         );
+    }
+
+    // ── Live permission-mode override (Desktop `switch_mode` control) ───────
+
+    #[test]
+    fn effective_permission_mode_falls_back_to_spawn_mode_without_override() {
+        let mut ctx = make_prompt_context_no_owner();
+        ctx.permission_mode = PermissionMode::DontAsk;
+        let ch = Uuid::new_v4();
+        assert_eq!(
+            ctx.effective_permission_mode(Some(ch)),
+            PermissionMode::DontAsk
+        );
+        // Heartbeat sessions have no channel and never see an override.
+        assert_eq!(ctx.effective_permission_mode(None), PermissionMode::DontAsk);
+        assert!(!ctx.take_pending_permission_rotation(ch));
+    }
+
+    #[test]
+    fn live_permission_mode_overrides_spawn_mode_per_channel_and_arms_one_rotation() {
+        let ctx = make_prompt_context_no_owner();
+        let ch = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        assert!(ctx.set_live_permission_mode(ch, PermissionMode::Plan));
+        assert_eq!(
+            ctx.effective_permission_mode(Some(ch)),
+            PermissionMode::Plan
+        );
+        // Other channels — and heartbeats — keep the spawn-time mode.
+        assert_eq!(
+            ctx.effective_permission_mode(Some(other)),
+            ctx.permission_mode
+        );
+        assert_eq!(ctx.effective_permission_mode(None), ctx.permission_mode);
+        // The rotation is consumed exactly once, by the channel's next turn.
+        assert!(ctx.take_pending_permission_rotation(ch));
+        assert!(!ctx.take_pending_permission_rotation(ch));
+        assert!(!ctx.take_pending_permission_rotation(other));
+    }
+
+    #[test]
+    fn live_permission_mode_no_op_pick_does_not_rotate_the_session() {
+        let ctx = make_prompt_context_no_owner();
+        let ch = Uuid::new_v4();
+        // Picking the mode the channel already runs under changes nothing, so
+        // the session (and its context) is kept.
+        assert!(!ctx.set_live_permission_mode(ch, ctx.permission_mode));
+        assert!(!ctx.take_pending_permission_rotation(ch));
+        assert!(ctx.set_live_permission_mode(ch, PermissionMode::Plan));
+        assert!(!ctx.set_live_permission_mode(ch, PermissionMode::Plan));
+        assert!(ctx.take_pending_permission_rotation(ch));
+        // Switching back to the spawn mode is a real change again.
+        assert!(ctx.set_live_permission_mode(ch, ctx.permission_mode));
+        assert!(ctx.take_pending_permission_rotation(ch));
     }
 }

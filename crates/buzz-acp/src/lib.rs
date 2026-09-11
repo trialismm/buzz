@@ -1571,6 +1571,7 @@ fn handle_relay_observer_control_event(
     observer: Option<&observer::ObserverHandle>,
     owner_pubkey_hex: &str,
     event_publisher: RelayEventPublisher,
+    ctx: &PromptContext,
 ) {
     // Defense-in-depth: verify signature even though the relay already checked.
     if let Err(e) = buzz_core::verify_event(&event) {
@@ -1615,6 +1616,9 @@ fn handle_relay_observer_control_event(
         }
         Some("switch_model") => {
             handle_switch_model_control(&payload, pool, observer);
+        }
+        Some("switch_mode") => {
+            handle_switch_mode_control(&payload, pool, observer, ctx);
         }
         Some("publish_project_owner_announcements") => {
             handle_publish_project_owner_announcements_control(
@@ -1910,6 +1914,84 @@ fn handle_switch_model_control(
 }
 
 /// Maximum crashes in a 60-second window before a slot's circuit opens.
+/// Handle a Desktop `switch_mode` control frame: record a chat-level
+/// permission-mode override for `channelId` on the shared [`PromptContext`].
+///
+/// Unlike `switch_model`, this never cancels the in-flight turn — a turn that
+/// started under one mode finishes under it. The override lands on the
+/// channel's next turn, which rotates the session so `session/new` applies
+/// the new mode. Statuses: `switched` (idle — the next turn runs under the
+/// mode), `deferred` (a turn is in flight — applies once it ends),
+/// `ambiguous_target` (several session scopes in the channel), and
+/// `unsupported_mode` (not a known mode).
+fn handle_switch_mode_control(
+    payload: &serde_json::Value,
+    pool: &mut AgentPool,
+    observer: Option<&observer::ObserverHandle>,
+    ctx: &PromptContext,
+) {
+    let Some(channel_id) = payload
+        .get("channelId")
+        .and_then(|value| value.as_str())
+        .and_then(|value| value.parse::<Uuid>().ok())
+    else {
+        tracing::warn!("observer switch_mode control frame missing valid channelId");
+        return;
+    };
+    let Some(mode_raw) = payload.get("mode").and_then(|value| value.as_str()) else {
+        tracing::warn!("observer switch_mode control frame missing mode");
+        return;
+    };
+    let request_id = payload
+        .get("requestId")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let turn_in_flight = pool
+        .task_map()
+        .values()
+        .any(|m| m.channel_id == Some(channel_id));
+    let status = if pool.channel_control_is_ambiguous(channel_id) {
+        "ambiguous_target"
+    } else {
+        match <config::PermissionMode as clap::ValueEnum>::from_str(mode_raw, true) {
+            Err(_) => "unsupported_mode",
+            Ok(mode) => {
+                let changed = ctx.set_live_permission_mode(channel_id, mode);
+                tracing::info!(
+                    channel = %channel_id,
+                    mode = %mode,
+                    changed,
+                    turn_in_flight,
+                    "live permission mode recorded"
+                );
+                if turn_in_flight {
+                    "deferred"
+                } else {
+                    "switched"
+                }
+            }
+        }
+    };
+    if let Some(observer) = observer {
+        observer.emit(
+            "control_result",
+            None,
+            &observer::ObserverContext {
+                channel_id: Some(channel_id.to_string()),
+                session_id: None,
+                turn_id: None,
+                started_at: None,
+            },
+            serde_json::json!({
+                "type": "switch_mode",
+                "status": status,
+                "mode": mode_raw,
+                "requestId": request_id,
+            }),
+        );
+    }
+}
+
 const CIRCUIT_BREAKER_THRESHOLD: usize = 3;
 /// Window for circuit-breaker crash counting.
 const CIRCUIT_BREAKER_WINDOW: Duration = Duration::from_secs(60);
@@ -2828,6 +2910,8 @@ async fn tokio_main() -> Result<()> {
         memory_enabled: config.memory_enabled,
         harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
+        live_permission_modes: std::sync::Mutex::new(std::collections::HashMap::new()),
+        pending_permission_rotations: std::sync::Mutex::new(std::collections::HashSet::new()),
     });
 
     if !config.memory_enabled {
@@ -3232,6 +3316,7 @@ async fn tokio_main() -> Result<()> {
                                     observer.as_ref(),
                                     owner_hex,
                                     relay.event_publisher(),
+                                    &ctx,
                                 );
                             } else {
                                 tracing::warn!("observer control frame received but no owner resolved — dropping");
@@ -4681,7 +4766,9 @@ fn schedule_delivery_fallback(
     rest_client: Option<&relay::RestClient>,
 ) {
     let probe = result.agent.acp.take_delivery_probe();
-    let turn_text = result.agent.acp.take_turn_text();
+    let plan_text = result.agent.acp.take_turn_plan_text();
+    let turn_text =
+        delivery_fallback::fallback_body(&result.agent.acp.take_turn_text(), plan_text.as_deref());
     let tool_sent = result.agent.acp.take_turn_sent_message();
     let ended_normally = matches!(
         (&result.source, &result.outcome),
@@ -4691,9 +4778,25 @@ fn schedule_delivery_fallback(
         )
     );
     let Some(rest) = rest_client.filter(|_| ended_normally) else {
+        if matches!(result.source, PromptSource::Channel(_)) {
+            tracing::info!(
+                turn_id = %result.turn_id,
+                outcome = match &result.outcome {
+                    PromptOutcome::Ok(stop) => format!("ok({stop:?})"),
+                    PromptOutcome::Error(e) => format!("error({e})"),
+                    PromptOutcome::ProjectContextIndeterminate(_) => "project_context_indeterminate".into(),
+                    PromptOutcome::Timeout(_) => "timeout".into(),
+                    PromptOutcome::AgentExited => "exited".into(),
+                    _ => "other".into(),
+                },
+                has_rest = rest_client.is_some(),
+                "delivery fallback not considered: turn did not end normally"
+            );
+        }
         return;
     };
     let Some(probe) = probe else {
+        tracing::info!(turn_id = %result.turn_id, "delivery fallback not considered: no probe");
         return;
     };
     let rest = rest.clone();
@@ -6229,6 +6332,76 @@ mod owner_control_command_tests {
                 steer_tx: None,
                 successful_steer_deliveries: HashSet::new(),
             },
+        );
+    }
+
+    #[tokio::test]
+    async fn observer_switch_mode_control_records_override_without_signalling_the_turn() {
+        let ctx = crate::pool::tests::make_prompt_context_no_owner();
+        let mut pool = AgentPool::from_slots(vec![]);
+        let ch = Uuid::new_v4();
+        let scope = scope::SessionScope::Conversation { channel_id: ch };
+        pool.record_scope_owner(scope.clone(), 0);
+        let observer = observer::ObserverHandle::in_process();
+
+        // Idle: recorded for the channel's next turn.
+        let payload = serde_json::json!({
+            "channelId": ch.to_string(), "mode": "plan", "requestId": "mode-1",
+        });
+        handle_switch_mode_control(&payload, &mut pool, Some(&observer), &ctx);
+        let result = &observer.snapshot()[0];
+        assert_eq!(result.payload["type"], "switch_mode");
+        assert_eq!(result.payload["status"], "switched");
+        assert_eq!(result.payload["mode"], "plan");
+        assert_eq!(result.payload["requestId"], "mode-1");
+        assert_eq!(result.channel_id, Some(ch.to_string()));
+        assert_eq!(
+            ctx.effective_permission_mode(Some(ch)),
+            config::PermissionMode::Plan
+        );
+        assert!(ctx.take_pending_permission_rotation(ch));
+
+        // Busy: recorded as deferred — the in-flight turn is NOT signalled.
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        insert_task_meta(&mut pool, 0, scope, tx);
+        let payload = serde_json::json!({
+            "channelId": ch.to_string(), "mode": "dontAsk", "requestId": "mode-2",
+        });
+        handle_switch_mode_control(&payload, &mut pool, Some(&observer), &ctx);
+        assert_eq!(observer.snapshot()[1].payload["status"], "deferred");
+        assert_eq!(
+            rx.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        );
+        assert_eq!(
+            ctx.effective_permission_mode(Some(ch)),
+            config::PermissionMode::DontAsk
+        );
+        assert!(ctx.take_pending_permission_rotation(ch));
+
+        // Unknown mode: refused, override untouched.
+        let payload = serde_json::json!({
+            "channelId": ch.to_string(), "mode": "yolo", "requestId": "mode-3",
+        });
+        handle_switch_mode_control(&payload, &mut pool, Some(&observer), &ctx);
+        assert_eq!(observer.snapshot()[2].payload["status"], "unsupported_mode");
+        assert_eq!(
+            ctx.effective_permission_mode(Some(ch)),
+            config::PermissionMode::DontAsk
+        );
+        assert!(!ctx.take_pending_permission_rotation(ch));
+
+        // Sibling thread scopes in the channel: ambiguous, like the other controls.
+        pool.task_map_mut().clear();
+        pool.record_scope_owner(thread_scope(ch, &"a".repeat(64)), 1);
+        let payload = serde_json::json!({
+            "channelId": ch.to_string(), "mode": "plan", "requestId": "mode-4",
+        });
+        handle_switch_mode_control(&payload, &mut pool, Some(&observer), &ctx);
+        assert_eq!(observer.snapshot()[3].payload["status"], "ambiguous_target");
+        assert_eq!(
+            ctx.effective_permission_mode(Some(ch)),
+            config::PermissionMode::DontAsk
         );
     }
 

@@ -842,6 +842,7 @@ export function HomeView({
                     mediaTags: imetaTags,
                     emojiTags,
                     mentionTags,
+                    permissionModeTag,
                   } = splitOutgoingTags(mediaTags);
                   const result = await sendChannelMessage(
                     channelId,
@@ -852,6 +853,12 @@ export function HomeView({
                     undefined,
                     emojiTags,
                     mentionTags,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    permissionModeTag,
                   );
                   const authorPubkey = currentPubkey ?? itemToReply.item.pubkey;
                   const reply: InboxReply = {

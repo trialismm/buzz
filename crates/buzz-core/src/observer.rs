@@ -17,6 +17,12 @@ pub const OBSERVER_FRAME_TAG: &str = "frame";
 pub const OBSERVER_FRAME_TELEMETRY: &str = "telemetry";
 /// Frame value for owner-to-agent observer control commands.
 pub const OBSERVER_FRAME_CONTROL: &str = "control";
+/// Tag an owner puts on a channel message (kind 9) to set the permission
+/// mode the mentioned agents run that turn (and later turns) under:
+/// `["buzz:permission-mode", "<ACP mode>"]`, e.g. `plan`, `dontAsk`,
+/// `bypassPermissions`. Only the agent's owner may set it; the harness ignores
+/// the tag on anyone else's message. Runtime-only — never persisted.
+pub const PERMISSION_MODE_TAG: &str = "buzz:permission-mode";
 /// Minimum plausible NIP-44 v2 ciphertext length.
 pub const NIP44_MIN_CONTENT_LEN: usize = 132;
 /// Maximum NIP-44 v2 ciphertext length.

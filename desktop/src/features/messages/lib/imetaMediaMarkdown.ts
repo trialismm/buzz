@@ -25,6 +25,7 @@
  * `imetaMediaFromTags` zero-fills it (no consumer reads the value today).
  */
 
+import { isPermissionModeTag } from "@/features/agents/lib/permissionMode";
 import type { BlobDescriptor } from "@/shared/api/tauri";
 import { parseImetaTags } from "@/shared/ui/markdown/parseImeta";
 
@@ -368,11 +369,14 @@ export function splitOutgoingTags(tags: string[][] | undefined): {
   emojiTags: string[][];
   mentionTags: string[][];
   linkPreviewTags: string[][];
+  /** At most one `buzz:permission-mode` tag; the last one wins. */
+  permissionModeTag: string[] | undefined;
 } {
   const mediaTags: string[][] = [];
   const emojiTags: string[][] = [];
   const mentionTags: string[][] = [];
   const linkPreviewTags: string[][] = [];
+  let permissionModeTag: string[] | undefined;
   for (const tag of tags ?? []) {
     if (tag[0] === "emoji") {
       emojiTags.push(tag);
@@ -380,9 +384,17 @@ export function splitOutgoingTags(tags: string[][] | undefined): {
       mentionTags.push(tag);
     } else if (tag[0] === "link-preview") {
       linkPreviewTags.push(tag);
+    } else if (isPermissionModeTag(tag)) {
+      permissionModeTag = tag;
     } else {
       mediaTags.push(tag);
     }
   }
-  return { mediaTags, emojiTags, mentionTags, linkPreviewTags };
+  return {
+    mediaTags,
+    emojiTags,
+    mentionTags,
+    linkPreviewTags,
+    permissionModeTag,
+  };
 }

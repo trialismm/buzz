@@ -65,6 +65,14 @@ import type { ControlResultFrame } from "@/shared/api/types";
  * tested with synthetic frames and a fake clock. The caller injects the
  * relay subscription, the per-channel sends, and the timeout scheduler.
  */
+export type LiveSwitchOutcome =
+  | "ok"
+  | "unsupported"
+  | "failed"
+  | "not_delivered"
+  | "pending"
+  | "ambiguous";
+
 export async function awaitLiveSwitchOutcome({
   requestId,
   channelIds,
@@ -82,25 +90,13 @@ export async function awaitLiveSwitchOutcome({
   sendSwitches: () => Promise<void>;
   /** Schedule the no-reply fallback; returns a cancel function. */
   scheduleTimeout: (onTimeout: () => void) => () => void;
-}): Promise<
-  "ok" | "unsupported" | "failed" | "not_delivered" | "pending" | "ambiguous"
-> {
+}): Promise<LiveSwitchOutcome> {
   const expected = new Set(channelIds);
-  const settled = new Promise<
-    "ok" | "unsupported" | "failed" | "not_delivered" | "pending" | "ambiguous"
-  >((resolve) => {
+  const settled = new Promise<LiveSwitchOutcome>((resolve) => {
     let unsubscribe = () => {};
     let cancelTimeout = () => {};
     const succeeded = new Set<string>();
-    const finish = (
-      outcome:
-        | "ok"
-        | "unsupported"
-        | "failed"
-        | "not_delivered"
-        | "pending"
-        | "ambiguous",
-    ) => {
+    const finish = (outcome: LiveSwitchOutcome) => {
       cancelTimeout();
       unsubscribe();
       resolve(outcome);

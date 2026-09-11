@@ -111,6 +111,12 @@ export type MessageComposerProps = {
   /** Render the app-wide upload queue above this composer dock. */
   showBackgroundUploadProgress?: boolean;
   toolbarExtraActions?: ReactNode;
+  /**
+   * Agent the composer talks to when the channel's member list doesn't say
+   * (project home: the selected project agent). Shows the permission-mode
+   * pill for it and uses its configuration as the pill's baseline.
+   */
+  permissionModeAgentPubkey?: string | null;
   typingParentEventId?: string | null;
   typingRootEventId?: string | null;
 };

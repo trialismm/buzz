@@ -6,6 +6,10 @@ import {
 } from "@/features/messages/lib/useChannelLinks";
 import { useComposerAutofocus } from "@/features/messages/lib/useComposerAutofocus";
 import { useDrafts } from "@/features/messages/lib/useDrafts";
+import {
+  useComposerPermissionMode,
+  withComposerPermissionModeTag,
+} from "@/features/messages/lib/composerPermissionMode";
 import { resolveSentDraftKey } from "@/features/messages/ui/draftSubmitKey";
 import {
   useEmojiAutocomplete,
@@ -46,6 +50,7 @@ import { ComposerAttachments, DropZoneOverlay } from "./ComposerAttachments";
 import { focusMentionOptionsTrigger } from "./MentionAutocomplete";
 import { MessageComposerAutocompletes } from "./MessageComposerAutocompletes";
 import { ComposerDockToolbar } from "./ComposerDockToolbar";
+import { ComposerPermissionModePill } from "./ComposerPermissionModePill";
 import { ComposerUploadProgressPill } from "./ComposerUploadProgressPill";
 import { NonMemberMentionDialog } from "./NonMemberMentionDialog";
 import { useComposerVoiceNote } from "./useComposerVoiceNote";
@@ -98,6 +103,7 @@ function MessageComposerImpl({
   showBackgroundUploadProgress = true,
   showTopBorder = false,
   toolbarExtraActions,
+  permissionModeAgentPubkey = null,
   typingParentEventId = null,
   typingRootEventId = null,
 }: MessageComposerProps) {
@@ -231,7 +237,10 @@ function MessageComposerImpl({
   const isUploadingRef = React.useRef(media.isUploading);
   const isSubmitLockedRef = React.useRef(false);
   const [isSubmitLocked, setIsSubmitLocked] = React.useState(false);
-  const onSendRef = React.useRef(onSend);
+  const composerPermissionMode = useComposerPermissionMode(channelId);
+  const composerPermissionModeRef = React.useRef(composerPermissionMode);
+  composerPermissionModeRef.current = composerPermissionMode;
+  const onSendRef = React.useRef<MessageComposerProps["onSend"]>(onSend);
   const onEditSaveRef = React.useRef(onEditSave);
   const onEditLastOwnMessageRef = React.useRef(onEditLastOwnMessage);
   const editTargetRef = React.useRef(editTarget);
@@ -243,7 +252,19 @@ function MessageComposerImpl({
   disabledRef.current = disabled;
   isSendingRef.current = isSending;
   isUploadingRef.current = media.isUploading;
-  onSendRef.current = onSend;
+  // Channel messages carry the composer's permission-mode pick as a tag so the
+  // agents they wake run under it (see `ComposerPermissionModePill`). Applied
+  // at the send seam so every parent's `onSend` gets it without knowing.
+  onSendRef.current = (content, mentionPubkeys, mediaTags, ...rest) =>
+    onSend(
+      content,
+      mentionPubkeys,
+      withComposerPermissionModeTag(
+        mediaTags,
+        composerPermissionModeRef.current,
+      ),
+      ...rest,
+    );
   onEditSaveRef.current = onEditSave;
   onEditLastOwnMessageRef.current = onEditLastOwnMessage;
   editTargetRef.current = editTarget;
@@ -818,6 +839,23 @@ function MessageComposerImpl({
     if (!voiceNote.hasAttachmentRef.current) void media.handlePaperclip();
   }, [media.handlePaperclip, voiceNote.hasAttachmentRef]);
   const acceptsDrop = ownsDropZone && voiceNote.acceptsAttachment;
+  // Memoized so the memo'd toolbar isn't re-rendered by a fresh fragment on
+  // every keystroke; the pill re-renders on its own data.
+  const lockedAgentPubkey =
+    lockedAgents[0]?.pubkey ?? permissionModeAgentPubkey ?? null;
+  const toolbarActions = React.useMemo(
+    () => (
+      <>
+        <ComposerPermissionModePill
+          channelId={channelId}
+          disabled={composerDisabled}
+          preferredAgentPubkey={lockedAgentPubkey}
+        />
+        {toolbarExtraActions}
+      </>
+    ),
+    [channelId, composerDisabled, lockedAgentPubkey, toolbarExtraActions],
+  );
   return (
     <>
       <footer
@@ -960,7 +998,7 @@ function MessageComposerImpl({
               layoutMode={layoutMode}
               composerDisabled={composerDisabled}
               editor={richText.editor}
-              extraActions={toolbarExtraActions}
+              extraActions={toolbarActions}
               formattingDisabled={composerDisabled}
               gifMediaController={media}
               isEmojiPickerOpen={isEmojiPickerOpen}

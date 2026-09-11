@@ -145,6 +145,39 @@ pub fn tool_call_sends_message(title: &str, raw_input: Option<&serde_json::Value
         .any(|text| text.contains("buzz messages send"))
 }
 
+/// The plan a Claude Code plan-mode turn wrote: the `content` of a Write
+/// tool call targeting the plans directory (`~/.claude/plans/*.md`). Plan
+/// mode never streams the plan as prose, so this is the only copy the
+/// harness sees when `ExitPlanMode` is refused.
+pub fn plan_file_content(raw_input: Option<&serde_json::Value>) -> Option<String> {
+    let raw = raw_input?;
+    let path = raw.get("file_path").and_then(|v| v.as_str())?;
+    if !path.contains("/.claude/plans/") {
+        return None;
+    }
+    let content = raw.get("content").and_then(|v| v.as_str())?;
+    if content.trim().is_empty() {
+        return None;
+    }
+    Some(content.to_string())
+}
+
+/// Text the fallback should publish for a silent turn: the streamed prose,
+/// else the captured plan framed as such — a plan-mode turn that ends with a
+/// refused `ExitPlanMode` has nothing else to say.
+pub fn fallback_body(turn_text: &str, plan: Option<&str>) -> String {
+    if !turn_text.trim().is_empty() {
+        return turn_text.to_string();
+    }
+    match plan {
+        Some(plan) if !plan.trim().is_empty() => format!(
+            "**Plan** (plan mode — nothing was changed; re-send with another permission mode to execute it)\n\n{}",
+            plan.trim()
+        ),
+        _ => String::new(),
+    }
+}
+
 /// What to do once a turn has ended with `end_turn`.
 #[derive(Debug, PartialEq, Eq)]
 pub enum FallbackDecision {
@@ -586,5 +619,33 @@ mod tests {
         }
         assert!(log.0.lock().unwrap().len() <= SELF_POST_LOG_CAP);
         assert!(!log.posted_since(ch, 100), "the early entry was evicted");
+    }
+
+    #[test]
+    fn plan_file_content_reads_only_writes_into_the_plans_directory() {
+        let plan = serde_json::json!({
+            "file_path": "/Users/me/.claude/plans/buzz-thing.md",
+            "content": "# Plan\n1. do x",
+        });
+        assert_eq!(
+            plan_file_content(Some(&plan)).as_deref(),
+            Some("# Plan\n1. do x")
+        );
+        let elsewhere =
+            serde_json::json!({"file_path": "/Users/me/Desktop/plan.md", "content": "x"});
+        assert_eq!(plan_file_content(Some(&elsewhere)), None);
+        let blank = serde_json::json!({"file_path": "/u/.claude/plans/p.md", "content": "  "});
+        assert_eq!(plan_file_content(Some(&blank)), None);
+        assert_eq!(plan_file_content(None), None);
+    }
+
+    #[test]
+    fn fallback_body_prefers_prose_and_frames_a_lone_plan() {
+        assert_eq!(fallback_body("answer", Some("plan")), "answer");
+        let framed = fallback_body("  ", Some("1. step"));
+        assert!(framed.starts_with("**Plan** (plan mode"));
+        assert!(framed.ends_with("1. step"));
+        assert_eq!(fallback_body("", None), "");
+        assert_eq!(fallback_body("", Some("   ")), "");
     }
 }

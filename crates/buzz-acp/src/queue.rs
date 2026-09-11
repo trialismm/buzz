@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::prompt_project::PromptProjectInfo;
 
-use crate::config::DedupMode;
+use crate::config::{DedupMode, PermissionMode};
 use crate::scope::SessionScope;
 
 /// Maximum events queued per session scope before oldest events are dropped.
@@ -132,6 +132,45 @@ pub enum CancelReason {
 }
 
 /// A batch of events to prompt the agent with.
+/// The permission mode the owner asked for on this batch, if any: the
+/// `buzz:permission-mode` tag of the newest owner-authored event in the batch
+/// (events are `created_at`-sorted). Non-owner tags are ignored — runtime
+/// control belongs to the owner, like observer controls — and so is an unknown
+/// value. `None` when no owner is resolved: fail closed.
+pub(crate) fn permission_mode_for_batch(
+    batch: &FlushBatch,
+    owner: Option<&nostr::PublicKey>,
+) -> Option<PermissionMode> {
+    let owner = owner?;
+    batch
+        .events
+        .iter()
+        .rev()
+        .filter(|be| be.event.pubkey == *owner)
+        .find_map(|be| {
+            be.event.tags.iter().find_map(|tag| {
+                let parts = tag.as_slice();
+                if parts.first().map(String::as_str)
+                    != Some(buzz_core::observer::PERMISSION_MODE_TAG)
+                {
+                    return None;
+                }
+                let raw = parts.get(1)?;
+                match <PermissionMode as clap::ValueEnum>::from_str(raw, true) {
+                    Ok(mode) => Some(mode),
+                    Err(_) => {
+                        tracing::warn!(
+                            event = %be.event.id,
+                            value = %raw,
+                            "ignoring unknown permission-mode tag value"
+                        );
+                        None
+                    }
+                }
+            })
+        })
+}
+
 #[derive(Debug, Clone)]
 pub struct FlushBatch {
     pub channel_id: Uuid,
@@ -6598,6 +6637,104 @@ mod tests {
         assert!(
             !prompt.contains("Description:"),
             "unresolved metadata must not render a Description field; got: {prompt}"
+        );
+    }
+
+    // ── permission_mode_for_batch ────────────────────────────────────────────
+
+    fn tagged_event(keys: &Keys, tags: Vec<Vec<String>>) -> Event {
+        let tags: Vec<nostr::Tag> = tags
+            .into_iter()
+            .map(|t| nostr::Tag::parse(t).unwrap())
+            .collect();
+        EventBuilder::new(Kind::Custom(9), "hi")
+            .tags(tags)
+            .sign_with_keys(keys)
+            .unwrap()
+    }
+
+    fn batch_of(events: Vec<Event>) -> FlushBatch {
+        let channel_id = Uuid::new_v4();
+        FlushBatch {
+            channel_id,
+            scope: conv(channel_id),
+            events: events
+                .into_iter()
+                .map(|event| BatchEvent {
+                    event,
+                    prompt_tag: "test".into(),
+                    received_at: Instant::now(),
+                })
+                .collect(),
+            cancelled_events: vec![],
+            cancel_reason: None,
+        }
+    }
+
+    const MODE_TAG: &str = buzz_core::observer::PERMISSION_MODE_TAG;
+
+    #[test]
+    fn permission_mode_for_batch_reads_the_owner_tag_accepting_acp_spelling() {
+        let owner = Keys::generate();
+        let batch = batch_of(vec![tagged_event(
+            &owner,
+            vec![vec![MODE_TAG.into(), "dontAsk".into()]],
+        )]);
+        assert_eq!(
+            permission_mode_for_batch(&batch, Some(&owner.public_key())),
+            Some(PermissionMode::DontAsk)
+        );
+        let batch = batch_of(vec![tagged_event(
+            &owner,
+            vec![vec![MODE_TAG.into(), "plan".into()]],
+        )]);
+        assert_eq!(
+            permission_mode_for_batch(&batch, Some(&owner.public_key())),
+            Some(PermissionMode::Plan)
+        );
+    }
+
+    #[test]
+    fn permission_mode_for_batch_ignores_non_owner_tags_and_needs_a_resolved_owner() {
+        let owner = Keys::generate();
+        let stranger = Keys::generate();
+        let batch = batch_of(vec![tagged_event(
+            &stranger,
+            vec![vec![MODE_TAG.into(), "plan".into()]],
+        )]);
+        assert_eq!(
+            permission_mode_for_batch(&batch, Some(&owner.public_key())),
+            None
+        );
+        let batch = batch_of(vec![tagged_event(
+            &owner,
+            vec![vec![MODE_TAG.into(), "plan".into()]],
+        )]);
+        assert_eq!(permission_mode_for_batch(&batch, None), None);
+    }
+
+    #[test]
+    fn permission_mode_for_batch_newest_owner_tag_wins_and_unknown_values_are_skipped() {
+        let owner = Keys::generate();
+        let stranger = Keys::generate();
+        let batch = batch_of(vec![
+            tagged_event(&owner, vec![vec![MODE_TAG.into(), "plan".into()]]),
+            tagged_event(&owner, vec![]),
+            tagged_event(&owner, vec![vec![MODE_TAG.into(), "dontAsk".into()]]),
+            // A later non-owner tag never outranks the owner's.
+            tagged_event(&stranger, vec![vec![MODE_TAG.into(), "plan".into()]]),
+        ]);
+        assert_eq!(
+            permission_mode_for_batch(&batch, Some(&owner.public_key())),
+            Some(PermissionMode::DontAsk)
+        );
+        let batch = batch_of(vec![tagged_event(
+            &owner,
+            vec![vec![MODE_TAG.into(), "yolo".into()]],
+        )]);
+        assert_eq!(
+            permission_mode_for_batch(&batch, Some(&owner.public_key())),
+            None
         );
     }
 }

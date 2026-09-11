@@ -6,6 +6,41 @@ const MAX_THREAD_ROOT_EXCERPT_CHARS: usize = 64;
 const SENT_FROM_THREAD_TAG: &str = "buzz:sent-from-thread";
 const AGENT_ADDRESS_MENTION_MARKER: &str = "agent-address";
 
+/// ACP permission modes `buzz-acp` accepts on the `buzz:permission-mode` tag.
+const PERMISSION_MODE_VALUES: &[&str] = &[
+    "default",
+    "auto",
+    "acceptEdits",
+    "bypassPermissions",
+    "dontAsk",
+    "plan",
+];
+
+/// Append the owner's per-message permission-mode tag
+/// (`["buzz:permission-mode", "<mode>"]`, see
+/// `buzz_core_pkg::observer::PERMISSION_MODE_TAG`). Exactly two parts and a
+/// known ACP mode; anything else is rejected rather than forwarded.
+pub(super) fn append_permission_mode_tag(
+    mode_tag: Option<&[String]>,
+    tags: &mut Vec<Tag>,
+) -> Result<(), String> {
+    let Some(mode_tag) = mode_tag else {
+        return Ok(());
+    };
+    if mode_tag.len() != 2
+        || mode_tag.first().map(String::as_str)
+            != Some(buzz_core_pkg::observer::PERMISSION_MODE_TAG)
+    {
+        return Err("invalid permission-mode tag shape".into());
+    }
+    if !PERMISSION_MODE_VALUES.contains(&mode_tag[1].as_str()) {
+        return Err(format!("unknown permission mode {:?}", mode_tag[1]));
+    }
+    let parts: Vec<&str> = mode_tag.iter().map(String::as_str).collect();
+    tags.push(Tag::parse(parts).map_err(|e| format!("invalid permission-mode tag: {e}"))?);
+    Ok(())
+}
+
 pub(super) fn mention_reference_tags(
     mentions: &[Vec<String>],
     tags: &mut Vec<Tag>,
@@ -157,6 +192,37 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn permission_mode_tag_accepts_known_modes_and_rejects_everything_else() {
+        let tag_name = buzz_core_pkg::observer::PERMISSION_MODE_TAG;
+        let mut tags = Vec::new();
+        append_permission_mode_tag(Some(&[tag_name.to_string(), "plan".to_string()]), &mut tags)
+            .unwrap();
+        assert_eq!(tags[0].as_slice(), &[tag_name, "plan"]);
+
+        // Absent tag is a no-op.
+        let mut none = Vec::new();
+        append_permission_mode_tag(None, &mut none).unwrap();
+        assert!(none.is_empty());
+
+        for bad in [
+            vec![tag_name.to_string()],
+            vec![
+                tag_name.to_string(),
+                "plan".to_string(),
+                "extra".to_string(),
+            ],
+            vec![tag_name.to_string(), "yolo".to_string()],
+            vec!["permission-mode".to_string(), "plan".to_string()],
+        ] {
+            let mut tags = Vec::new();
+            assert!(
+                append_permission_mode_tag(Some(&bad), &mut tags).is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
     }
 
     #[test]

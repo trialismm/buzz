@@ -543,6 +543,7 @@ export function useSendMessageMutation(
         emojiTags,
         mentionTags,
         linkPreviewTags,
+        permissionModeTag,
       } = splitOutgoingTags(mediaTags);
       const recipientPubkeys = messageMentionPubkeys(
         effectiveChannel,
@@ -602,6 +603,7 @@ export function useSendMessageMutation(
           undefined,
           undefined,
           suppliedRootEventId,
+          permissionModeTag,
         );
 
         // Build tags matching relay-emitted shape: h, author p, mention ps, reply es, imeta, emoji.
@@ -641,6 +643,7 @@ export function useSendMessageMutation(
             ...mentionTags,
             ...linkPreviewTags,
             ...(sentFromThreadTag ? [sentFromThreadTag] : []),
+            ...(permissionModeTag ? [permissionModeTag] : []),
           ],
           content: content.trim(),
           sig: "",
@@ -651,7 +654,11 @@ export function useSendMessageMutation(
         effectiveChannel.id,
         content,
         recipientPubkeys,
-        [...mentionTags, ...(sentFromThreadTag ? [sentFromThreadTag] : [])],
+        [
+          ...mentionTags,
+          ...(sentFromThreadTag ? [sentFromThreadTag] : []),
+          ...(permissionModeTag ? [permissionModeTag] : []),
+        ],
       );
     },
     onMutate: async ({
