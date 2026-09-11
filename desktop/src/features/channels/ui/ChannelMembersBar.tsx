@@ -18,6 +18,7 @@ import {
   getDmHuddleMemberPubkeys,
   hasOtherDmParticipant,
 } from "@/features/channels/lib/dmHuddleMembers";
+import { ChannelMemoButton } from "@/features/channels/ui/ChannelMemoButton";
 import { canStartHuddleInChannel } from "@/features/channels/lib/huddleAvailability";
 import { useUsersBatchQuery } from "@/features/profile/hooks";
 import type { Channel } from "@/shared/api/types";
@@ -192,6 +193,7 @@ export function ChannelMembersBar({
   const controls =
     variant === "compact" ? (
       <div className="flex items-center gap-[6px]">
+        <ChannelMemoButton channelId={channel.id} channelName={channel.name} />
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button
@@ -249,7 +251,7 @@ export function ChannelMembersBar({
         </Tooltip>
 
         {huddleIndicator}
-
+        <ChannelMemoButton channelId={channel.id} channelName={channel.name} />
         <Tooltip disableHoverableContent>
           <TooltipTrigger asChild>
             <Button

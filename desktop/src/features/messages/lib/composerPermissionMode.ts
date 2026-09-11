@@ -49,6 +49,13 @@ export function setComposerPermissionMode(
   for (const listener of listeners) listener();
 }
 
+/** Community-switch reset (see `resetCommunityState`): drop the in-memory
+ *  mirror so the next community re-reads its own channels from storage. */
+export function resetComposerPermissionModeCache(): void {
+  cache.clear();
+  for (const listener of listeners) listener();
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   return () => {

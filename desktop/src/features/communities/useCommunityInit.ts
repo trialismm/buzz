@@ -35,6 +35,8 @@ import {
   restoreActiveAgentTurnsForCommunity,
 } from "@/features/agents/activeAgentTurnsStore";
 import { resetAgentWorkingSignal } from "@/features/agents/agentWorkingSignal";
+import { resetChannelMemoCache } from "@/features/channels/lib/channelMemoStore";
+import { resetComposerPermissionModeCache } from "@/features/messages/lib/composerPermissionMode";
 import { resetAgentObserverStore } from "@/features/agents/observerRelayStore";
 import { resetAvatarPresentations } from "@/features/profile/avatarPresentationStore";
 import { resetAvatarProfileSync } from "@/features/profile/avatarProfileSync";
@@ -68,6 +70,8 @@ async function resetCommunityState({
   resetAgentObserverStore();
   resetActiveAgentTurnsStore();
   resetAgentWorkingSignal();
+  resetChannelMemoCache();
+  resetComposerPermissionModeCache();
   if (isTauri() && isMacPlatform()) {
     void clearTrayAgentActivity();
   }
