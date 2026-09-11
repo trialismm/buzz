@@ -476,6 +476,13 @@ pub struct CliArgs {
     )]
     pub permission_mode: PermissionMode,
 
+    /// Owner tool policy: Claude Code permission rules as JSON
+    /// `{"allow":["Bash(pnpm test:*)"],"deny":["Write","Bash(git push:*)"]}`.
+    /// Applied natively via `session/new` meta and enforced again at the
+    /// harness's permission seam. Blank = no policy.
+    #[arg(long, env = "BUZZ_ACP_TOOL_POLICY", default_value = "")]
+    pub tool_policy: String,
+
     /// Inbound author gate: which authors' events the harness forwards.
     /// Modes: owner-only (default), allowlist, anyone, nobody.
     #[arg(
@@ -597,6 +604,8 @@ pub struct Config {
     pub session_title: Option<String>,
     /// Permission mode to apply after session creation. `Default` = skip.
     pub permission_mode: PermissionMode,
+    /// Owner tool policy (see `tool_policy`); empty when none.
+    pub tool_policy: crate::tool_policy::ToolPolicy,
     /// Inbound author gate mode.
     pub respond_to: RespondTo,
     /// Validated allowlist of pubkey hex strings (used when respond_to == Allowlist).
@@ -1200,6 +1209,8 @@ impl Config {
                 .as_deref()
                 .and_then(sanitize_session_title),
             permission_mode: args.permission_mode,
+            tool_policy: crate::tool_policy::ToolPolicy::parse(&args.tool_policy)
+                .map_err(|e| ConfigError::ConfigFile(format!("BUZZ_ACP_TOOL_POLICY: {e}")))?,
             respond_to: args.respond_to,
             respond_to_allowlist,
             allowed_respond_to,
@@ -1578,6 +1589,7 @@ mod tests {
             effort_level: None,
             session_title: None,
             permission_mode: PermissionMode::BypassPermissions,
+            tool_policy: Default::default(),
             respond_to: RespondTo::Anyone,
             respond_to_allowlist: HashSet::new(),
             allowed_respond_to: Vec::new(),

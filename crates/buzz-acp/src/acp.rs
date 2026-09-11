@@ -165,6 +165,9 @@ pub struct AcpClient {
     /// agent's own `buzz` CLI calls (its reply channel). Enforced here because
     /// the adapter forwards prompts to us and we would otherwise approve them.
     read_only_sessions: std::collections::HashSet<String>,
+    /// Owner tool policy checked at the permission seam (deny rules reject the
+    /// prompt before the auto-approve). Set per session creation from config.
+    tool_policy: crate::tool_policy::ToolPolicy,
     /// The JSON-RPC id of the most recently sent `session/prompt` request.
     /// Used by [`cancel_with_cleanup`] to drain the correct response.
     /// Set in [`session_prompt_with_idle_timeout`]; consumed in [`cancel_with_cleanup`].
@@ -571,6 +574,7 @@ impl AcpClient {
             pending_permission_id: None,
             permission_responded: false,
             read_only_sessions: std::collections::HashSet::new(),
+            tool_policy: Default::default(),
             last_prompt_id: None,
             current_hard_deadline: None,
             observer: None,
@@ -677,11 +681,18 @@ impl AcpClient {
         mcp_servers: Vec<McpServer>,
         system_prompt: Option<SystemPromptTransport<'_>>,
         session_title: Option<&str>,
+        claude_options: Option<serde_json::Value>,
     ) -> Result<SessionNewResponse, AcpError> {
         let mut params = serde_json::json!({
             "cwd": cwd,
             "mcpServers": mcp_servers,
         });
+        // claude-agent-acp reads Claude Code SDK options from
+        // `_meta.claudeCode.options` (e.g. `settings.permissions`); other
+        // adapters ignore unknown `_meta` keys.
+        if let Some(options) = claude_options {
+            params["_meta"]["claudeCode"]["options"] = options;
+        }
         match system_prompt {
             Some(SystemPromptTransport::Field(sp)) => {
                 params["systemPrompt"] = serde_json::Value::String(sp.to_owned());
@@ -720,7 +731,7 @@ impl AcpClient {
         session_title: Option<&str>,
     ) -> Result<String, AcpError> {
         Ok(self
-            .session_new_full(cwd, mcp_servers, system_prompt, session_title)
+            .session_new_full(cwd, mcp_servers, system_prompt, session_title, None)
             .await?
             .session_id)
     }
@@ -1995,6 +2006,11 @@ impl AcpClient {
     /// Mark `session_id` as read-only (or not). Read-only sessions have every
     /// permission prompt rejected except `buzz` CLI calls, so `plan` /
     /// `dontAsk` hold even when the adapter would have let us approve.
+    /// Install the owner tool policy the permission seam enforces.
+    pub fn set_tool_policy(&mut self, policy: crate::tool_policy::ToolPolicy) {
+        self.tool_policy = policy;
+    }
+
     pub fn set_session_read_only(&mut self, session_id: &str, read_only: bool) {
         if read_only {
             self.read_only_sessions.insert(session_id.to_string());
@@ -2044,8 +2060,20 @@ impl AcpClient {
             .unwrap_or("");
         let read_only = self.read_only_sessions.contains(session_id)
             && !tool_call_is_buzz_cli(tool_title, tool_call.get("rawInput"));
+        let policy_denial = if read_only {
+            None
+        } else {
+            match self.tool_policy.decide_prompt(
+                tool_title,
+                tool_call.get("kind").and_then(|k| k.as_str()).unwrap_or(""),
+                tool_call.get("rawInput"),
+            ) {
+                crate::tool_policy::PromptDecision::Deny(rule) => Some(rule),
+                _ => None,
+            }
+        };
         // Find allow_once by kind — NEVER hardcode optionId.
-        let allow_once = if read_only {
+        let allow_once = if read_only || policy_denial.is_some() {
             None
         } else {
             options
@@ -2063,7 +2091,16 @@ impl AcpClient {
             );
             permission_response_selected(&id, option_id)
         } else {
-            if read_only {
+            if let Some(rule) = policy_denial.as_deref() {
+                tracing::info!(
+                    "rejecting permission id={id} on session {session_id}: tool policy deny {rule:?} matched {}",
+                    if tool_title.is_empty() {
+                        "tool call"
+                    } else {
+                        tool_title
+                    }
+                );
+            } else if read_only {
                 tracing::info!(
                     "rejecting permission id={id} for read-only session {session_id}: {}",
                     if tool_title.is_empty() {
@@ -3607,6 +3644,7 @@ mod tests {
                 vec![],
                 Some(SystemPromptTransport::Field("Custom system prompt")),
                 None,
+                None,
             )
             .await
             .expect("session_new_full should succeed");
@@ -3692,7 +3730,7 @@ mod tests {
             .expect("initialize should succeed");
 
         let resp = client
-            .session_new_full("/tmp", vec![], None, None)
+            .session_new_full("/tmp", vec![], None, None, None)
             .await
             .expect("session_new_full should succeed");
 
@@ -3720,7 +3758,7 @@ mod tests {
             .expect("initialize should succeed");
 
         let resp = client
-            .session_new_full("/tmp", vec![], None, Some("Fizz · #buzz-dev"))
+            .session_new_full("/tmp", vec![], None, Some("Fizz · #buzz-dev"), None)
             .await
             .expect("session_new_full should succeed");
 
@@ -3748,7 +3786,7 @@ mod tests {
             .expect("initialize should succeed");
 
         let resp = client
-            .session_new_full("/tmp", vec![], None, None)
+            .session_new_full("/tmp", vec![], None, None, None)
             .await
             .expect("session_new_full should succeed");
 
@@ -3783,6 +3821,7 @@ mod tests {
                 "/tmp",
                 vec![],
                 Some(SystemPromptTransport::ClaudeMeta("Be concise")),
+                None,
                 None,
             )
             .await
@@ -3823,6 +3862,7 @@ mod tests {
                 vec![],
                 Some(SystemPromptTransport::ClaudeMeta("Be concise")),
                 Some("Fizz · #buzz-dev"),
+                None,
             )
             .await
             .expect("session_new_full should succeed");

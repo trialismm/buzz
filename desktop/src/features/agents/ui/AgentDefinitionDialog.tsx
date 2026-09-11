@@ -73,6 +73,8 @@ import { AgentDefaultsDialog } from "./AgentDefaultsDialog";
 import { AgentHarnessField } from "./AgentHarnessField";
 import { PermissionModeField } from "./PermissionModeField";
 import { PERMISSION_MODE_ENV_KEY } from "@/features/agents/lib/permissionMode";
+import { TOOL_POLICY_ENV_KEY } from "@/features/agents/lib/toolPolicy";
+import { ToolPolicyField } from "./ToolPolicyField";
 import {
   AgentAiConfigurationModeField,
   AgentCreateAiDefaultsSummary,
@@ -954,6 +956,12 @@ export function AgentDefinitionDialog({
                 id="persona-permission-mode"
                 onEnvVarsChange={setEnvVars}
               />
+              <ToolPolicyField
+                disabled={isPending}
+                envVars={envVars}
+                id="persona-tool-policy"
+                onEnvVarsChange={setEnvVars}
+              />
             </section>
           </div>
 
@@ -1014,6 +1022,7 @@ export function AgentDefinitionDialog({
                     fileSatisfiedEnvKeys={localModeGate.fileSatisfiedEnvKeys}
                     hiddenEnvKeys={[
                       PERMISSION_MODE_ENV_KEY,
+                      TOOL_POLICY_ENV_KEY,
                       ...(topLevelSecretEnvVar ? [topLevelSecretEnvVar] : []),
                     ]}
                     inheritedEnvVars={inheritedEnvVarsForAdvanced}

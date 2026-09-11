@@ -5,6 +5,8 @@ import { Textarea } from "@/shared/ui/textarea";
 import { EnvVarsEditor, type EnvVarsValue } from "./EnvVarsEditor";
 import { PERMISSION_MODE_ENV_KEY } from "@/features/agents/lib/permissionMode";
 import { PermissionModeField } from "./PermissionModeField";
+import { TOOL_POLICY_ENV_KEY } from "@/features/agents/lib/toolPolicy";
+import { ToolPolicyField } from "./ToolPolicyField";
 import {
   CARD_MINT_KEY_ANNOTATIONS,
   PERSONA_FIELD_CONTROL_CLASS,
@@ -127,6 +129,7 @@ export function EditAgentAdvancedFields({
     () => [
       ...hiddenEnvKeys,
       PERMISSION_MODE_ENV_KEY,
+      TOOL_POLICY_ENV_KEY,
       ...(isBuzzAgentRuntime(modelTuningRuntimeId)
         ? [BUZZ_AGENT_THINKING_EFFORT]
         : []),
@@ -157,6 +160,12 @@ export function EditAgentAdvancedFields({
         disabled={disabled}
         envVars={envVars}
         id="edit-agent-permission-mode"
+        onEnvVarsChange={onEnvVarsChange}
+      />
+      <ToolPolicyField
+        disabled={disabled}
+        envVars={envVars}
+        id="edit-agent-tool-policy"
         onEnvVarsChange={onEnvVarsChange}
       />
       {/* Inherit runtime from template */}

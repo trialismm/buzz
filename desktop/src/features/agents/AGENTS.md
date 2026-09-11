@@ -375,6 +375,23 @@ with a TypeScript lookup table or an id comparison in a component.
     restart — and is never persisted to any env tier. The harness also accepts
     an equivalent `switch_mode` observer control; the Desktop has no UI for it.
 
+19. **Tool policy is an env-carried harness policy in Claude Code's own
+    rule syntax.** `lib/toolPolicy.ts` owns `BUZZ_ACP_TOOL_POLICY`
+    (`{"allow":[…],"deny":[…]}`, rules like `Write`, `Bash(git push:*)`,
+    `Edit(src/**)`, `mcp__server__tool`) and validates rule shape; the raw env
+    editor hides the key. Surfaces mirror the permission mode: `ToolPolicyField`
+    in the create dialog's Configurations column (persona env) and the instance
+    Advanced section (instance env, wins at spawn), with deny/allow lists and
+    quick-add presets. buzz-acp sends the rules natively as
+    `session/new` `_meta.claudeCode.options.settings.permissions` and also
+    vetoes matching prompts at its permission seam; because Claude Code never
+    consults the client under `bypassPermissions`, a deny-carrying policy makes
+    the harness run non-read-only sessions in explicit `default` mode
+    (`session_wire_mode`), so "Run everything" then means "everything not
+    denied". Read-only modes stay stricter than any policy. Not a
+    `KnownAcpRuntime` capability; other harnesses ignore the meta and only get
+    the seam backstop.
+
 ## Channel-only runtime controls
 
 Desktop observer controls identify a channel, not a thread session. The harness

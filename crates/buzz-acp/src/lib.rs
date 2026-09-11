@@ -15,6 +15,7 @@ mod queue;
 mod relay;
 mod scope;
 mod setup_mode;
+mod tool_policy;
 mod usage;
 
 pub use usage::TurnUsage;
@@ -2903,6 +2904,7 @@ async fn tokio_main() -> Result<()> {
         context_message_limit: config.context_message_limit,
         max_turns_per_session: config.max_turns_per_session,
         permission_mode: config.permission_mode,
+        tool_policy: config.tool_policy.clone(),
         agent_keys: config.keys.clone(),
         agent_owner_pubkey: startup_owner
             .as_deref()
@@ -5970,7 +5972,9 @@ async fn run_models(args: ModelsArgs) -> Result<()> {
     // so shutdown() runs on all paths (success, error, timeout).
     let protocol_result = tokio::time::timeout(MODELS_TIMEOUT, async {
         let init = client.initialize().await?;
-        let session = client.session_new_full(&cwd, vec![], None, None).await?;
+        let session = client
+            .session_new_full(&cwd, vec![], None, None, None)
+            .await?;
         Ok::<_, acp::AcpError>((init, session))
     })
     .await;
@@ -9448,6 +9452,7 @@ mod build_mcp_servers_tests {
             effort_level: None,
             session_title: None,
             permission_mode: config::PermissionMode::BypassPermissions,
+            tool_policy: Default::default(),
             respond_to: config::RespondTo::Anyone,
             respond_to_allowlist: std::collections::HashSet::new(),
             allowed_respond_to: vec![],
@@ -9675,6 +9680,7 @@ mod error_outcome_emission_tests {
             effort_level: None,
             session_title: None,
             permission_mode: config::PermissionMode::BypassPermissions,
+            tool_policy: Default::default(),
             respond_to: config::RespondTo::Anyone,
             respond_to_allowlist: HashSet::new(),
             allowed_respond_to: vec![],

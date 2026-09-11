@@ -819,6 +819,9 @@ pub struct PromptContext {
     pub max_turns_per_session: u32,
     /// Permission mode to apply after session creation. `Default` = skip.
     pub permission_mode: PermissionMode,
+    /// Owner tool policy (`BUZZ_ACP_TOOL_POLICY`): native rules for
+    /// `session/new` meta plus the harness-seam backstop. Empty = none.
+    pub tool_policy: crate::tool_policy::ToolPolicy,
     /// Agent identity — used to derive the NIP-AE conversation key at
     /// session creation for core injection.
     pub agent_keys: nostr::Keys,
@@ -1562,6 +1565,11 @@ async fn create_session_and_apply_model(
         ctx.session_title.as_deref(),
     );
 
+    // Owner tool policy: native Claude Code rules ride in the session meta;
+    // the same rules back-stop the permission seam for every session.
+    agent.acp.set_tool_policy(ctx.tool_policy.clone());
+    let claude_options = (!ctx.tool_policy.is_empty())
+        .then(|| serde_json::json!({ "settings": ctx.tool_policy.claude_settings() }));
     let resp = agent
         .acp
         .session_new_full(
@@ -1574,6 +1582,7 @@ async fn create_session_and_apply_model(
                 combined_system_prompt.as_deref(),
             ),
             session_title.as_deref(),
+            claude_options,
         )
         .await?;
 
@@ -1750,9 +1759,13 @@ async fn create_session_and_apply_model(
     // BEFORE the capture emission so the cached `mode` option tells the truth.
     let permission_mode =
         ctx.effective_permission_mode(channel.scope.map(|scope| scope.channel_id()));
-    let permission_mode_applied = !permission_mode.is_default()
-        && agent_supports_mode(&resp.raw, permission_mode.as_wire_str())
-        && apply_permission_mode(&mut agent.acp, &resp.session_id, &permission_mode).await?;
+    let wire_mode = session_wire_mode(permission_mode, &ctx.tool_policy);
+    let permission_mode_applied = match wire_mode {
+        Some(mode) if agent_supports_mode(&resp.raw, mode.as_wire_str()) => {
+            apply_permission_mode(&mut agent.acp, &resp.session_id, &mode).await?
+        }
+        _ => false,
+    };
     // Harness-side enforcement, independent of adapter support: read-only
     // modes reject every permission prompt the adapter forwards (the harness
     // would otherwise auto-approve them, making "Plan only" a suggestion).
@@ -1771,8 +1784,8 @@ async fn create_session_and_apply_model(
         if let Some(StartupEffortOutcome::Applied { config_id, value }) = &effort_outcome {
             patch_config_option_current_value(&mut opts, config_id, value);
         }
-        if permission_mode_applied {
-            patch_config_option_current_value(&mut opts, "mode", permission_mode.as_wire_str());
+        if let (true, Some(mode)) = (permission_mode_applied, wire_mode) {
+            patch_config_option_current_value(&mut opts, "mode", mode.as_wire_str());
         }
         opts
     };
@@ -2047,6 +2060,26 @@ fn patch_config_option_current_value(
 /// Check if the agent's `session/new` response advertises a given mode ID
 /// in `result.modes.availableModes[].id`. Returns `false` if the modes
 /// field is absent or the mode isn't listed.
+/// The mode to set on a fresh session, or `None` to leave the agent's default.
+///
+/// A deny-carrying tool policy needs the agent to *ask* before mutating tools
+/// so the harness seam can veto: under `bypassPermissions` Claude Code never
+/// consults the client, so "Run everything" (and the legacy prompting modes)
+/// become an explicit `default` when deny rules exist. Read-only modes are
+/// stricter than any policy and stay as they are.
+pub(crate) fn session_wire_mode(
+    effective: PermissionMode,
+    policy: &crate::tool_policy::ToolPolicy,
+) -> Option<PermissionMode> {
+    let has_deny = !policy.deny.is_empty();
+    match effective {
+        PermissionMode::Plan | PermissionMode::DontAsk => Some(effective),
+        _ if has_deny => Some(PermissionMode::Default),
+        _ if effective.is_default() => None,
+        other => Some(other),
+    }
+}
+
 fn agent_supports_mode(session_new_result: &serde_json::Value, mode_wire: &str) -> bool {
     session_new_result
         .get("modes")
@@ -9364,6 +9397,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             context_message_limit: 0,
             max_turns_per_session: 0,
             permission_mode: PermissionMode::Default,
+            tool_policy: Default::default(),
             agent_keys: agent_keys.clone(),
             agent_owner_pubkey: owner_pubkey,
             memory_enabled: false,
@@ -11379,5 +11413,44 @@ done"#
         // Switching back to the spawn mode is a real change again.
         assert!(ctx.set_live_permission_mode(ch, ctx.permission_mode));
         assert!(ctx.take_pending_permission_rotation(ch));
+    }
+
+    #[test]
+    fn session_wire_mode_forces_prompting_only_when_deny_rules_exist() {
+        use crate::tool_policy::ToolPolicy;
+        let none = ToolPolicy::default();
+        let allow_only = ToolPolicy::parse(r#"{"allow":["Bash(pnpm test:*)"]}"#).unwrap();
+        let deny = ToolPolicy::parse(r#"{"deny":["Write"]}"#).unwrap();
+        // No policy: the configured mode goes on the wire, default stays untouched.
+        assert_eq!(session_wire_mode(PermissionMode::Default, &none), None);
+        assert_eq!(
+            session_wire_mode(PermissionMode::BypassPermissions, &none),
+            Some(PermissionMode::BypassPermissions)
+        );
+        assert_eq!(
+            session_wire_mode(PermissionMode::BypassPermissions, &allow_only),
+            Some(PermissionMode::BypassPermissions)
+        );
+        // Deny rules: every non-read-only mode becomes an explicit `default`.
+        for mode in [
+            PermissionMode::Default,
+            PermissionMode::BypassPermissions,
+            PermissionMode::AcceptEdits,
+            PermissionMode::Auto,
+        ] {
+            assert_eq!(
+                session_wire_mode(mode, &deny),
+                Some(PermissionMode::Default)
+            );
+        }
+        // Read-only modes are stricter than any policy.
+        assert_eq!(
+            session_wire_mode(PermissionMode::Plan, &deny),
+            Some(PermissionMode::Plan)
+        );
+        assert_eq!(
+            session_wire_mode(PermissionMode::DontAsk, &deny),
+            Some(PermissionMode::DontAsk)
+        );
     }
 }
