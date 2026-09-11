@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 mod acp;
+mod channel_context;
 mod config;
 mod delivery_fallback;
 mod engram_fetch;
@@ -2905,6 +2906,7 @@ async fn tokio_main() -> Result<()> {
         max_turns_per_session: config.max_turns_per_session,
         permission_mode: config.permission_mode,
         tool_policy: config.tool_policy.clone(),
+        context_dir: config.context_dir.clone(),
         agent_keys: config.keys.clone(),
         agent_owner_pubkey: startup_owner
             .as_deref()
@@ -9453,6 +9455,7 @@ mod build_mcp_servers_tests {
             session_title: None,
             permission_mode: config::PermissionMode::BypassPermissions,
             tool_policy: Default::default(),
+            context_dir: None,
             respond_to: config::RespondTo::Anyone,
             respond_to_allowlist: std::collections::HashSet::new(),
             allowed_respond_to: vec![],
@@ -9681,6 +9684,7 @@ mod error_outcome_emission_tests {
             session_title: None,
             permission_mode: config::PermissionMode::BypassPermissions,
             tool_policy: Default::default(),
+            context_dir: None,
             respond_to: config::RespondTo::Anyone,
             respond_to_allowlist: HashSet::new(),
             allowed_respond_to: vec![],

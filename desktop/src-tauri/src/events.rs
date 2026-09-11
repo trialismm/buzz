@@ -421,6 +421,18 @@ pub fn build_remove_reaction(reaction_event_id: EventId) -> Result<EventBuilder,
 // ── Canvas ───────────────────────────────────────────────────────────────────
 
 /// Kind 40100 — set canvas.
+/// Kind 48106 — the owner's standing instructions for a channel (`h` tag).
+/// buzz-acp injects the newest owner-signed event as `<channel-instructions>`.
+pub fn build_channel_instructions(channel_id: Uuid, content: &str) -> Result<EventBuilder, String> {
+    check_content(content)?;
+    let tags = vec![tag(vec!["h", &channel_id.to_string()])?];
+    Ok(EventBuilder::new(
+        Kind::Custom(buzz_core_pkg::kind::KIND_HUDDLE_GUIDELINES as u16),
+        content,
+    )
+    .tags(tags))
+}
+
 pub fn build_set_canvas(channel_id: Uuid, content: &str) -> Result<EventBuilder, String> {
     check_content(content)?;
     let tags = vec![tag(vec!["h", &channel_id.to_string()])?];

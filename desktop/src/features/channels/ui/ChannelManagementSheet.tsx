@@ -5,7 +5,9 @@ import {
   DoorClosed,
   DoorOpen,
   Trash2,
+  FolderOpen,
   Paperclip,
+  ScrollText,
   Workflow as WorkflowIcon,
 } from "lucide-react";
 import * as React from "react";
@@ -59,6 +61,8 @@ import {
 } from "@/shared/ui/OverlayPanelBackdrop";
 import { ChannelCanvas } from "./ChannelCanvas";
 import { ChannelFilesView } from "./ChannelFilesView";
+import { ChannelContextFiles } from "./ChannelContextFiles";
+import { ChannelInstructions } from "./ChannelInstructions";
 import { ChannelWorkflowsSection } from "./ChannelWorkflowsSection";
 import {
   CHANNEL_FORM_FIELD_CONTROL_CLASS,
@@ -178,7 +182,7 @@ export function ChannelManagementSheet({
   const [hasUserEditedChannelDraft, setHasUserEditedChannelDraft] =
     React.useState(false);
   const [activeView, setActiveView] = React.useState<
-    "summary" | "canvas" | "workflows" | "files"
+    "summary" | "canvas" | "workflows" | "files" | "instructions" | "context"
   >("summary");
   const visibleActiveView =
     workflowsEnabled || activeView !== "workflows" ? activeView : "summary";
@@ -624,7 +628,13 @@ type ChannelMutation<TArgs = void> = {
 };
 
 type ChannelManagementPanelContentProps = {
-  activeView: "summary" | "canvas" | "workflows" | "files";
+  activeView:
+    | "summary"
+    | "canvas"
+    | "workflows"
+    | "files"
+    | "instructions"
+    | "context";
   archiveChannelMutation: ChannelMutation;
   canEditChannel: boolean;
   canEditNarrative: boolean;
@@ -663,7 +673,9 @@ type ChannelManagementPanelContentProps = {
   onOpenChange: (open: boolean) => void;
   resolvedChannel: Channel;
   setActiveView: React.Dispatch<
-    React.SetStateAction<"summary" | "canvas" | "workflows" | "files">
+    React.SetStateAction<
+      "summary" | "canvas" | "workflows" | "files" | "instructions" | "context"
+    >
   >;
   unarchiveChannelMutation: ChannelMutation;
 };
@@ -746,7 +758,11 @@ function ChannelManagementPanelContent({
                   ? "Workflows"
                   : activeView === "files"
                     ? "Archives"
-                    : "Channel Settings"}
+                    : activeView === "instructions"
+                      ? "Instructions"
+                      : activeView === "context"
+                        ? "Context"
+                        : "Channel Settings"}
             </AuxiliaryPanelTitle>
           </DialogPrimitive.Title>
         </AuxiliaryPanelHeaderGroup>
@@ -819,6 +835,22 @@ function ChannelManagementPanelContent({
                 value={resolvedChannel.id}
               />
             </FieldGroup>
+            <div className="space-y-3">
+              <IngressRow
+                description="Standing rules agents follow in this channel. Stored on the relay; applies from their next session."
+                icon={ScrollText}
+                label="Instructions"
+                onClick={() => setActiveView("instructions")}
+                testId="channel-instructions-ingress"
+              />
+              <IngressRow
+                description="Reference files for the agents on this device — specs, notes, exports. Injected into every new session."
+                icon={FolderOpen}
+                label="Context"
+                onClick={() => setActiveView("context")}
+                testId="channel-context-ingress"
+              />
+            </div>
             <IngressRow
               description="Every image, video and file ever shared here, grouped by sender, with download."
               icon={Paperclip}
@@ -980,6 +1012,14 @@ function ChannelManagementPanelContent({
                 {unarchiveChannelMutation.error.message}
               </p>
             ) : null}
+          </div>
+        ) : activeView === "instructions" && channelId ? (
+          <div className="pt-3" data-testid="channel-instructions-section">
+            <ChannelInstructions channelId={channelId} />
+          </div>
+        ) : activeView === "context" && channelId ? (
+          <div className="pt-3" data-testid="channel-context-section">
+            <ChannelContextFiles channelId={channelId} />
           </div>
         ) : activeView === "files" && channelId ? (
           <ChannelFilesView

@@ -483,6 +483,12 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_TOOL_POLICY", default_value = "")]
     pub tool_policy: String,
 
+    /// Root of the Desktop's per-channel context folders
+    /// (`<dir>/<channel-id>/…`). Files there are rendered into each new
+    /// session's `<channel-context>` section. Unset = no context files.
+    #[arg(long, env = "BUZZ_ACP_CONTEXT_DIR")]
+    pub context_dir: Option<PathBuf>,
+
     /// Inbound author gate: which authors' events the harness forwards.
     /// Modes: owner-only (default), allowlist, anyone, nobody.
     #[arg(
@@ -606,6 +612,8 @@ pub struct Config {
     pub permission_mode: PermissionMode,
     /// Owner tool policy (see `tool_policy`); empty when none.
     pub tool_policy: crate::tool_policy::ToolPolicy,
+    /// Root of the per-channel context folders (`BUZZ_ACP_CONTEXT_DIR`).
+    pub context_dir: Option<PathBuf>,
     /// Inbound author gate mode.
     pub respond_to: RespondTo,
     /// Validated allowlist of pubkey hex strings (used when respond_to == Allowlist).
@@ -1211,6 +1219,7 @@ impl Config {
             permission_mode: args.permission_mode,
             tool_policy: crate::tool_policy::ToolPolicy::parse(&args.tool_policy)
                 .map_err(|e| ConfigError::ConfigFile(format!("BUZZ_ACP_TOOL_POLICY: {e}")))?,
+            context_dir: args.context_dir.clone(),
             respond_to: args.respond_to,
             respond_to_allowlist,
             allowed_respond_to,
@@ -1590,6 +1599,7 @@ mod tests {
             session_title: None,
             permission_mode: PermissionMode::BypassPermissions,
             tool_policy: Default::default(),
+            context_dir: None,
             respond_to: RespondTo::Anyone,
             respond_to_allowlist: HashSet::new(),
             allowed_respond_to: Vec::new(),

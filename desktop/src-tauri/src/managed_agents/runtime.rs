@@ -599,6 +599,11 @@ pub fn spawn_agent_child(
     // leak into an unrelated spawn; the caller's floor is asserted AFTER that
     // loop by `apply_replay_floor_env` so saved user env cannot shadow it.
     command.env_remove(REPLAY_FLOOR_ENV_VAR);
+    // Per-channel context folders (Channel Settings → Context); the harness
+    // renders `<dir>/<channel-id>/` into each new session's prompt.
+    if let Some(context_root) = crate::commands::channel_context_root() {
+        command.env("BUZZ_ACP_CONTEXT_DIR", context_root);
+    }
     command.env("BUZZ_ACP_AGENT_COMMAND", &resolved_agent_command);
     command.env("BUZZ_ACP_AGENT_ARGS", agent_args.join(","));
     match &resolved_mcp_command {

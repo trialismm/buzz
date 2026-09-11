@@ -822,6 +822,9 @@ pub struct PromptContext {
     /// Owner tool policy (`BUZZ_ACP_TOOL_POLICY`): native rules for
     /// `session/new` meta plus the harness-seam backstop. Empty = none.
     pub tool_policy: crate::tool_policy::ToolPolicy,
+    /// Root of the Desktop's per-channel context folders; see
+    /// `channel_context`. `None` = no context files.
+    pub context_dir: Option<std::path::PathBuf>,
     /// Agent identity — used to derive the NIP-AE conversation key at
     /// session creation for core injection.
     pub agent_keys: nostr::Keys,
@@ -1533,22 +1536,33 @@ async fn create_session_and_apply_model(
     // its own `<core-memory>` boundary, and canvas carries its own
     // `<channel-canvas>` boundary; both are appended with a blank-line separator.
     let is_goose = agent.agent_name == "goose";
-    let combined_system_prompt = with_canvas(
-        with_huddle_instructions(
-            with_core(
-                with_team(
-                    framed_system_prompt(
-                        &ctx.cwd,
-                        ctx.base_prompt.as_deref(),
-                        ctx.system_prompt.as_deref(),
+    // Owner-curated context files (Desktop: Channel Settings → Context) —
+    // rendered fresh every session so edits land on the next rotation.
+    let context_section = ctx.context_dir.as_deref().and_then(|root| {
+        channel
+            .scope
+            .map(SessionScope::channel_id)
+            .and_then(|cid| crate::channel_context::render_section(root, cid))
+    });
+    let combined_system_prompt = with_channel_context(
+        with_canvas(
+            with_huddle_instructions(
+                with_core(
+                    with_team(
+                        framed_system_prompt(
+                            &ctx.cwd,
+                            ctx.base_prompt.as_deref(),
+                            ctx.system_prompt.as_deref(),
+                        ),
+                        ctx.team_instructions.as_deref(),
                     ),
-                    ctx.team_instructions.as_deref(),
+                    agent_core,
                 ),
-                agent_core,
+                channel.huddle_instructions,
             ),
-            channel.huddle_instructions,
+            channel.canvas,
         ),
-        channel.canvas,
+        context_section.as_deref(),
     );
 
     let session_title = ctx.session_title.as_deref().map(|agent_name| {
@@ -2251,7 +2265,8 @@ fn with_core(framed: Option<String>, core: Option<&str>) -> Option<String> {
     }
 }
 
-/// Append owner-signed huddle instructions to this channel session's system prompt.
+/// Append the owner's channel instructions (kind 48106, once "huddle guidelines")
+/// to this channel session's system prompt.
 fn with_huddle_instructions(prompt: Option<String>, instructions: Option<&str>) -> Option<String> {
     let instructions = instructions
         .map(str::trim)
@@ -2259,14 +2274,24 @@ fn with_huddle_instructions(prompt: Option<String>, instructions: Option<&str>) 
     match (prompt, instructions) {
         (Some(prompt), Some(instructions)) => Some(format!(
             "{prompt}\n\n{}",
-            crate::prompt_framing::semantic_section("huddle-instructions", instructions)
+            crate::prompt_framing::semantic_section("channel-instructions", instructions)
         )),
         (None, Some(instructions)) => Some(crate::prompt_framing::semantic_section(
-            "huddle-instructions",
+            "channel-instructions",
             instructions,
         )),
         (Some(prompt), None) => Some(prompt),
         (None, None) => None,
+    }
+}
+
+/// Append the `<channel-context>` section (already framed by
+/// `channel_context::render_section`) after the canvas.
+fn with_channel_context(prompt: Option<String>, context: Option<&str>) -> Option<String> {
+    match (prompt, context) {
+        (Some(prompt), Some(context)) => Some(format!("{prompt}\n\n{context}")),
+        (None, Some(context)) => Some(context.to_string()),
+        (prompt, None) => prompt,
     }
 }
 
@@ -9398,6 +9423,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
             max_turns_per_session: 0,
             permission_mode: PermissionMode::Default,
             tool_policy: Default::default(),
+            context_dir: None,
             agent_keys: agent_keys.clone(),
             agent_owner_pubkey: owner_pubkey,
             memory_enabled: false,
@@ -9414,7 +9440,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":0,"result":{{"stopReason":"end_turn"}}}}'"
     fn huddle_instructions_append_as_system_section() {
         assert_eq!(
             with_huddle_instructions(Some("base".into()), Some("  reply now  ")).as_deref(),
-            Some("base\n\n<huddle-instructions>\nreply now\n</huddle-instructions>")
+            Some("base\n\n<channel-instructions>\nreply now\n</channel-instructions>")
         );
     }
 
