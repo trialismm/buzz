@@ -44,8 +44,11 @@ export function ToolPolicyField({
   const commit = (deny: string[], allow: string[]) => {
     onEnvVarsChange(withToolPolicy(envVars, { deny, allow }));
   };
-  const applyPreset = (rules: readonly string[]) => {
-    const deny = addToolRules(denyParsed.rules, rules);
+  // Presets toggle: a second click removes exactly the rules it added.
+  const togglePreset = (rules: readonly string[], applied: boolean) => {
+    const deny = applied
+      ? denyParsed.rules.filter((rule) => !rules.includes(rule))
+      : addToolRules(denyParsed.rules, rules);
     setDenyText(deny.join("\n"));
     commit(deny, allowParsed.rules);
   };
@@ -78,13 +81,16 @@ export function ToolPolicyField({
                 "disabled:pointer-events-none disabled:opacity-50",
               )}
               data-testid={`tool-policy-preset-${preset.label.toLowerCase().replace(/\s+/g, "-")}`}
-              disabled={disabled || applied}
+              aria-pressed={applied}
+              disabled={disabled}
               key={preset.label}
-              onClick={() => applyPreset(preset.deny)}
-              title={preset.description}
+              onClick={() => togglePreset(preset.deny, applied)}
+              title={
+                applied ? `Remove: ${preset.description}` : preset.description
+              }
               type="button"
             >
-              + {preset.label}
+              {applied ? "✓" : "+"} {preset.label}
             </button>
           );
         })}

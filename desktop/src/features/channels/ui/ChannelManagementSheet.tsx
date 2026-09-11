@@ -5,6 +5,7 @@ import {
   DoorClosed,
   DoorOpen,
   Trash2,
+  Paperclip,
   Workflow as WorkflowIcon,
 } from "lucide-react";
 import * as React from "react";
@@ -57,6 +58,7 @@ import {
   PANEL_OVERLAY_CLASS,
 } from "@/shared/ui/OverlayPanelBackdrop";
 import { ChannelCanvas } from "./ChannelCanvas";
+import { ChannelFilesView } from "./ChannelFilesView";
 import { ChannelWorkflowsSection } from "./ChannelWorkflowsSection";
 import {
   CHANNEL_FORM_FIELD_CONTROL_CLASS,
@@ -176,7 +178,7 @@ export function ChannelManagementSheet({
   const [hasUserEditedChannelDraft, setHasUserEditedChannelDraft] =
     React.useState(false);
   const [activeView, setActiveView] = React.useState<
-    "summary" | "canvas" | "workflows"
+    "summary" | "canvas" | "workflows" | "files"
   >("summary");
   const visibleActiveView =
     workflowsEnabled || activeView !== "workflows" ? activeView : "summary";
@@ -622,7 +624,7 @@ type ChannelMutation<TArgs = void> = {
 };
 
 type ChannelManagementPanelContentProps = {
-  activeView: "summary" | "canvas" | "workflows";
+  activeView: "summary" | "canvas" | "workflows" | "files";
   archiveChannelMutation: ChannelMutation;
   canEditChannel: boolean;
   canEditNarrative: boolean;
@@ -661,7 +663,7 @@ type ChannelManagementPanelContentProps = {
   onOpenChange: (open: boolean) => void;
   resolvedChannel: Channel;
   setActiveView: React.Dispatch<
-    React.SetStateAction<"summary" | "canvas" | "workflows">
+    React.SetStateAction<"summary" | "canvas" | "workflows" | "files">
   >;
   unarchiveChannelMutation: ChannelMutation;
 };
@@ -742,7 +744,9 @@ function ChannelManagementPanelContent({
                 ? "Canvas"
                 : activeView === "workflows"
                   ? "Workflows"
-                  : "Channel Settings"}
+                  : activeView === "files"
+                    ? "Archives"
+                    : "Channel Settings"}
             </AuxiliaryPanelTitle>
           </DialogPrimitive.Title>
         </AuxiliaryPanelHeaderGroup>
@@ -815,6 +819,13 @@ function ChannelManagementPanelContent({
                 value={resolvedChannel.id}
               />
             </FieldGroup>
+            <IngressRow
+              description="Every image, video and file ever shared here, grouped by sender, with download."
+              icon={Paperclip}
+              label="Archives"
+              onClick={() => setActiveView("files")}
+              testId="channel-archives-ingress"
+            />
 
             {canOpenCanvas ? (
               <div className="space-y-3">
@@ -970,6 +981,11 @@ function ChannelManagementPanelContent({
               </p>
             ) : null}
           </div>
+        ) : activeView === "files" && channelId ? (
+          <ChannelFilesView
+            channelId={channelId}
+            currentPubkey={currentPubkey}
+          />
         ) : activeView === "canvas" ? (
           <div data-testid="channel-canvas-section">
             <ChannelCanvas

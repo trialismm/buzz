@@ -551,14 +551,32 @@ pub fn spawn_agent_child(
     let nvm_bin = dirs::home_dir()
         .as_deref()
         .and_then(super::find_nvm_default_bin);
+    let exe_parent = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
     let augmented_path = build_augmented_path(
         dirs::home_dir(),
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf)),
+        exe_parent.clone(),
         login_shell_path(),
         nvm_bin,
     );
+    // Dev instance (nest `~/.buzz-dev`): put the sidecars next to this
+    // executable (`target/debug`) ahead of `~/.local/bin`, where the installed
+    // app links its own `buzz`. Otherwise every layer runs the dev build except
+    // the CLI the agent calls, which silently tests the release binary.
+    let is_dev_instance = super::nest_dir()
+        .and_then(|p| p.file_name().map(|n| n.to_os_string()))
+        .is_some_and(|n| n == ".buzz-dev");
+    let augmented_path = match (augmented_path, exe_parent) {
+        (Some(path), Some(parent)) if is_dev_instance => {
+            let parts = std::iter::once(parent).chain(std::env::split_paths(&path));
+            std::env::join_paths(parts)
+                .ok()
+                .map(|joined| joined.to_string_lossy().into_owned())
+                .or(Some(path))
+        }
+        (path, _) => path,
+    };
 
     let mut command = std::process::Command::new(&resolved_acp_command);
     if let Some(home) = super::default_agent_workdir() {
