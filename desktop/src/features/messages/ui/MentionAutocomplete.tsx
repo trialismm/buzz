@@ -374,11 +374,20 @@ export const MentionAutocomplete = React.memo(function MentionAutocomplete({
                                   : "not in channel"
                             }
                           >
+                            {ownerLabel ? `managed by ${ownerLabel}` : null}
                             {ownerLabel && suggestion.notInChannel
-                              ? `managed by ${ownerLabel} · not in channel`
-                              : ownerLabel
-                                ? `managed by ${ownerLabel}`
-                                : "not in channel"}
+                              ? " · "
+                              : null}
+                            {suggestion.notInChannel ? (
+                              // Warning colour: mentioning them here will not
+                              // reach them until they are added to the channel.
+                              <span
+                                className="font-medium text-warning"
+                                data-testid="mention-not-in-channel"
+                              >
+                                not in channel
+                              </span>
+                            ) : null}
                           </span>
                         ) : null}
                         {collisionNpub ? (
