@@ -48,6 +48,7 @@ use crate::managed_agents::{
     env_vars::merged_user_env,
     global_config::GlobalAgentConfig,
     normalize_agent_args,
+    runtime::connection,
     types::{AcpAvailabilityStatus, AgentDefinition, ManagedAgentRecord},
 };
 
@@ -404,9 +405,12 @@ impl AgentReadiness {
 ///   - `openai` → `OPENAI_COMPAT_API_KEY`
 ///   - `databricks` / `databricks_v2` → `DATABRICKS_HOST` (token optional —
 ///     OAuth PKCE is the fallback)
-/// * **claude**: a successful `claude auth status` probe.
+/// * **claude**: a successful `claude auth status` probe — unless the agent's
+///   Connection is `api-key` (`BUZZ_AGENT_CONNECTION`), in which case a
+///   non-empty `ANTHROPIC_API_KEY` is the credential and no login is asked.
 /// * **codex**: a successful `codex login status` probe (checks the codex
-///   credential store — NOT `OPENAI_API_KEY`).
+///   credential store — NOT `OPENAI_API_KEY`); same API-key override with
+///   `OPENAI_API_KEY`.
 /// * **unknown / custom command**: always `Ready` (no requirements known).
 ///
 /// Databricks note: `DATABRICKS_TOKEN` is `.unwrap_or_default()` in
@@ -453,8 +457,14 @@ fn collect_missing_requirements(
             &["claude", "auth", "status"],
             "complete Claude Code authentication by running the Claude CLI",
             rt,
+            connection::api_key_state(&effective.env, rt.id),
         ),
-        "codex" => cli_login::requirements(&["codex", "login", "status"], "run `codex login`", rt),
+        "codex" => cli_login::requirements(
+            &["codex", "login", "status"],
+            "run `codex login`",
+            rt,
+            connection::api_key_state(&effective.env, rt.id),
+        ),
         _ => vec![],
     }
 }
@@ -1013,7 +1023,12 @@ mod tests {
         // Use a not-installed runtime so the requirement is always emitted
         // regardless of whether codex is on the test machine's PATH.
         let rt = make_cli_runtime(&["__buzz_nonexistent_adapter_xyz789__"], None);
-        let reqs = cli_login::requirements(&["codex", "login", "status"], "run `codex login`", &rt);
+        let reqs = cli_login::requirements(
+            &["codex", "login", "status"],
+            "run `codex login`",
+            &rt,
+            None,
+        );
         // Whether codex is installed or not, the copy (if any) must not mention OPENAI_API_KEY.
         for req in &reqs {
             if let Requirement::CliLogin { setup_copy, .. } = req {
@@ -1099,6 +1114,7 @@ mod tests {
             &["__buzz_nonexistent_binary_abc123__", "status"],
             "install the tool first",
             &rt,
+            None,
         );
         assert!(
             !reqs.is_empty(),
@@ -1129,7 +1145,7 @@ mod tests {
         // → AdapterMissing state → no probe run → CliLogin{AdapterMissing}.
         let exe = present_binary_str();
         let rt = make_cli_runtime(&["__buzz_nonexistent_adapter_xyz789__"], Some(exe));
-        let reqs = cli_login::requirements(&[exe, "--list"], "install the adapter", &rt);
+        let reqs = cli_login::requirements(&[exe, "--list"], "install the adapter", &rt, None);
         assert!(
             !reqs.is_empty(),
             "adapter missing must produce a CliLogin requirement"
@@ -1156,7 +1172,7 @@ mod tests {
             static_commands(vec![exe]),              // adapter found via absolute path
             Some("__buzz_nonexistent_cli_abc123__"), // underlying CLI missing
         );
-        let reqs = cli_login::requirements(&[exe, "--list"], "install the CLI", &rt);
+        let reqs = cli_login::requirements(&[exe, "--list"], "install the CLI", &rt, None);
         assert!(
             !reqs.is_empty(),
             "CLI missing must produce a CliLogin requirement"
@@ -1185,6 +1201,7 @@ mod tests {
             &[exe, "--list"],
             "this should not show (probe exits 0)",
             &rt,
+            None,
         );
         assert!(
             reqs.is_empty(),
@@ -1202,8 +1219,12 @@ mod tests {
         // → CliLogin{Available} (tooling installed, needs login).
         let exe = present_binary_str();
         let rt = make_cli_runtime(static_commands(vec![exe]), Some(exe));
-        let reqs =
-            cli_login::requirements(&[exe, "--buzz-probe-fail-xyz"], "run `tool login`", &rt);
+        let reqs = cli_login::requirements(
+            &[exe, "--buzz-probe-fail-xyz"],
+            "run `tool login`",
+            &rt,
+            None,
+        );
         assert!(
             !reqs.is_empty(),
             "non-zero probe must produce a CliLogin requirement (logged out)"
@@ -1218,6 +1239,46 @@ mod tests {
                 "tooling installed, probe fails → Available (logged-out)"
             );
         }
+    }
+
+    #[test]
+    fn cli_login_requirements_api_key_connection_never_asks_for_login() {
+        // Same logged-out probe as above, but the agent's Connection is an
+        // API key: a filled-in key is Ready, a blank one is the key's EnvKey
+        // gap — the login probe is not consulted either way.
+        use crate::managed_agents::runtime::connection::ApiKeyState;
+        let exe = present_binary_str();
+        let rt = make_cli_runtime(static_commands(vec![exe]), Some(exe));
+        let probe = [exe, "--buzz-probe-fail-xyz"];
+        let filled = cli_login::requirements(
+            &probe,
+            "run `tool login`",
+            &rt,
+            Some(ApiKeyState {
+                key: "ANTHROPIC_API_KEY",
+                present: true,
+            }),
+        );
+        assert!(
+            filled.is_empty(),
+            "API-key agent with a key must be Ready despite a logged-out CLI; got {filled:?}"
+        );
+        let blank = cli_login::requirements(
+            &probe,
+            "run `tool login`",
+            &rt,
+            Some(ApiKeyState {
+                key: "ANTHROPIC_API_KEY",
+                present: false,
+            }),
+        );
+        assert_eq!(
+            blank,
+            vec![Requirement::EnvKey {
+                key: "ANTHROPIC_API_KEY".to_string()
+            }],
+            "a blank key routes to the key field, not to CLI login"
+        );
     }
 
     // ── codex readiness version gate ───────────────────────────────────────
@@ -1322,6 +1383,7 @@ mod tests {
             &[exe, "--buzz-probe-must-not-run-xyz"],
             "run `codex login`",
             &rt,
+            None,
         );
 
         restore_path(&orig);
@@ -1362,6 +1424,7 @@ mod tests {
             &[exe, "--buzz-probe-must-not-run-xyz"],
             "run `codex login`",
             &rt,
+            None,
         );
 
         restore_path(&orig);

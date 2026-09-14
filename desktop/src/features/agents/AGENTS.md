@@ -396,6 +396,27 @@ with a TypeScript lookup table or an id comparison in a component.
     `KnownAcpRuntime` capability; other harnesses ignore the meta and only get
     the seam backstop.
 
+20. **Connection (harness login vs API key) is an env-carried choice with a
+    per-runtime catalog.** `lib/agentConnection.ts` owns the marker
+    `BUZZ_AGENT_CONNECTION` (`api-key` | absent = subscription) and knows, per
+    runtime, which env var carries the key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`)
+    and whether the CLI needs an isolated home. Surfaces mirror the permission
+    mode: `AgentConnectionField` in the create dialog's Configurations column
+    (persona env) and the instance Advanced section (instance env, wins at
+    spawn); the raw env editor hides both keys; the profile hero shows a
+    read-only pill. The key is a plain env value on the local record, like the
+    provider API keys — persona env is never published (`persona_event_content`
+    carries no env). Verified facts the catalog encodes: Claude Code honours
+    `ANTHROPIC_API_KEY` over a live subscription login with no approval prompt
+    in SDK mode; Codex prefers its ChatGPT login, so the Tauri spawn
+    (`runtime/connection.rs`) sets `CODEX_HOME=<nest>/homes/codex-api` for an
+    API-key Codex agent. Readiness follows the choice: an API-key agent is
+    never asked to log the CLI in (`readiness/cli_login.rs` skips the
+    `claude auth status` / `codex login status` probe when the key is
+    filled in, and reports the key's `env_key` gap when it is blank), so it
+    starts even on a machine with no harness login. Only Claude and Codex
+    are in the catalog; other runtimes render no field.
+
 ## Channel-only runtime controls
 
 Desktop observer controls identify a channel, not a thread session. The harness

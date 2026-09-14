@@ -5,16 +5,24 @@ use crate::managed_agents::{
         classify_runtime, codex_adapter_availability, find_command, resolve_command,
         KnownAcpRuntime,
     },
+    runtime::connection::ApiKeyState,
     AcpAvailabilityStatus,
 };
 
 use super::{cli_probe, Requirement};
 
 /// Requirements for CLI-login runtimes (claude, codex).
+///
+/// `api_key` is the agent's Connection choice (see
+/// `runtime::connection::api_key_state`): an API-key agent is never asked to
+/// log the CLI in — the key is its credential — so the login probe is skipped
+/// and a blank key surfaces as an `EnvKey` gap instead. The install checks
+/// still apply either way.
 pub(super) fn requirements(
     probe_args: &[&str],
     setup_copy: &str,
     runtime: &KnownAcpRuntime,
+    api_key: Option<ApiKeyState>,
 ) -> Vec<Requirement> {
     let adapter_result = runtime
         .commands
@@ -39,6 +47,9 @@ pub(super) fn requirements(
 
     match availability {
         AcpAvailabilityStatus::Available => {
+            if let Some(reqs) = api_key_requirements(api_key) {
+                return reqs;
+            }
             let Some(binary_path) = resolve_command(probe_args[0]) else {
                 return vec![missing_requirement(
                     probe_args,
@@ -67,6 +78,20 @@ pub(super) fn requirements(
     }
 }
 
+/// The verdict an API-key connection replaces the login probe with:
+/// `None` for login agents (probe as usual), an empty list when the key is
+/// filled in, and the key's `EnvKey` gap when it is blank.
+fn api_key_requirements(api_key: Option<ApiKeyState>) -> Option<Vec<Requirement>> {
+    let state = api_key?;
+    Some(if state.present {
+        vec![]
+    } else {
+        vec![Requirement::EnvKey {
+            key: state.key.to_string(),
+        }]
+    })
+}
+
 fn missing_requirement(
     probe_args: &[&str],
     setup_copy: &str,
@@ -76,5 +101,31 @@ fn missing_requirement(
         probe_args: probe_args.iter().map(|value| value.to_string()).collect(),
         setup_copy: setup_copy.to_string(),
         availability,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn login_agents_keep_the_probe_and_api_key_agents_skip_it() {
+        assert_eq!(api_key_requirements(None), None);
+        assert_eq!(
+            api_key_requirements(Some(ApiKeyState {
+                key: "ANTHROPIC_API_KEY",
+                present: true
+            })),
+            Some(vec![])
+        );
+        assert_eq!(
+            api_key_requirements(Some(ApiKeyState {
+                key: "OPENAI_API_KEY",
+                present: false
+            })),
+            Some(vec![Requirement::EnvKey {
+                key: "OPENAI_API_KEY".to_string()
+            }])
+        );
     }
 }

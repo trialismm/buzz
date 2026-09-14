@@ -21,6 +21,7 @@ pub(crate) use path::{compose_path_entries, should_skip_claude_executable, shoul
 
 pub(crate) use super::access_policy::{build_respond_to_env_with_policy, RespondToEnv};
 
+pub(crate) mod connection;
 mod metadata;
 pub(crate) use metadata::{
     apply_agent_display_env, apply_replay_floor_env, child_rust_log_filter, resolve_session_title,
@@ -777,6 +778,25 @@ pub fn spawn_agent_child(
     // reserved-key filtered. Written last so user-explicit values win over Buzz-set env.
     for (key, value) in &descriptor.env {
         command.env(key, value);
+    }
+    // API-key connection on a runtime whose CLI would prefer its own login:
+    // give it an isolated home that no login ever touched (see
+    // `runtime/connection.rs`), created on demand.
+    if connection::wants_api_key(&descriptor.env) {
+        if let Some(nest) = super::nest_dir() {
+            if let Some((env_key, home)) =
+                connection::api_key_home_for(runtime_meta.map(|r| r.id), &nest)
+            {
+                if let Err(error) = std::fs::create_dir_all(&home) {
+                    eprintln!(
+                        "buzz-desktop: could not create {} for the API-key connection: {error}",
+                        home.display()
+                    );
+                } else {
+                    command.env(env_key, &home);
+                }
+            }
+        }
     }
     // Resolve once and stamp the same value onto the snapshot below.
     let acp_session_policy = super::apply_app_acp_session_policy_env(app, &mut command);

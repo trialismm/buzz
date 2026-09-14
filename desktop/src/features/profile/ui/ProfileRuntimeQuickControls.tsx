@@ -1,5 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Gauge, ShieldCheck, Terminal } from "lucide-react";
+import {
+  BadgeCheck,
+  ChevronDown,
+  Gauge,
+  KeyRound,
+  ShieldCheck,
+  Terminal,
+} from "lucide-react";
 import React from "react";
 import { toast } from "sonner";
 
@@ -30,6 +37,11 @@ import {
   effortPickerState,
   effortSelectionToPersistedValue,
 } from "@/features/agents/ui/effortPicker";
+import {
+  connectionCatalogFor,
+  connectionLabel,
+  readAgentConnection,
+} from "@/features/agents/lib/agentConnection";
 import {
   effortOptionsKey,
   rememberEffortOptions,
@@ -145,12 +157,49 @@ export function ProfileRuntimeQuickControls({
         runtimes={runtimes}
       />
       <EffortQuickPicker agent={agent} notifySaved={notifySaved} />
+      <ConnectionPill agent={agent} runtimes={runtimes} />
       <PermissionModePill
         agent={agent}
         notifySaved={notifySaved}
         runtimes={runtimes}
       />
     </div>
+  );
+}
+
+/**
+ * Read-only: how this agent reaches its model vendor (harness login vs an
+ * API key), from the instance env then the persona env. Edited in the agent's
+ * settings, since an API key needs typing rather than a menu pick.
+ */
+function ConnectionPill({
+  agent,
+  runtimes,
+}: {
+  agent: ManagedAgent;
+  runtimes: ReturnType<typeof useAcpRuntimesQuery>["data"] & object;
+}) {
+  const personasQuery = usePersonasQuery();
+  const runtimeId = currentRuntimeEntry(runtimes, agent.agentCommand)?.id;
+  const entry = connectionCatalogFor(runtimeId);
+  if (!entry) return null;
+  const persona = personasQuery.data?.find((p) => p.id === agent.personaId);
+  const merged = { ...(persona?.envVars ?? {}), ...agent.envVars };
+  const { mode } = readAgentConnection(merged, runtimeId);
+  const label = connectionLabel(mode);
+  return (
+    <span
+      className={cn(PILL_CLASS, "inline-flex items-center")}
+      data-testid="user-profile-quick-connection"
+      title={
+        mode === "api-key"
+          ? `Billed to the ${entry.apiKeyLabel} account. Change it in the agent's settings.`
+          : `${entry.subscriptionLabel}. Change it in the agent's settings.`
+      }
+    >
+      <PillIcon icon={mode === "api-key" ? KeyRound : BadgeCheck} />
+      <span className="truncate">{label}</span>
+    </span>
   );
 }
 

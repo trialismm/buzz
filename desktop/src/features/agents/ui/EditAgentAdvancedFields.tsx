@@ -5,6 +5,8 @@ import { Textarea } from "@/shared/ui/textarea";
 import { EnvVarsEditor, type EnvVarsValue } from "./EnvVarsEditor";
 import { PERMISSION_MODE_ENV_KEY } from "@/features/agents/lib/permissionMode";
 import { PermissionModeField } from "./PermissionModeField";
+import { AgentConnectionField } from "./AgentConnectionField";
+import { connectionHiddenEnvKeys } from "@/features/agents/lib/agentConnection";
 import { TOOL_POLICY_ENV_KEY } from "@/features/agents/lib/toolPolicy";
 import { ToolPolicyField } from "./ToolPolicyField";
 import {
@@ -130,6 +132,7 @@ export function EditAgentAdvancedFields({
       ...hiddenEnvKeys,
       PERMISSION_MODE_ENV_KEY,
       TOOL_POLICY_ENV_KEY,
+      ...connectionHiddenEnvKeys(modelTuningRuntimeId),
       ...(isBuzzAgentRuntime(modelTuningRuntimeId)
         ? [BUZZ_AGENT_THINKING_EFFORT]
         : []),
@@ -156,6 +159,13 @@ export function EditAgentAdvancedFields({
 
   return (
     <div className="space-y-5 pt-2">
+      <AgentConnectionField
+        disabled={disabled}
+        envVars={envVars}
+        id="edit-agent-connection"
+        onEnvVarsChange={onEnvVarsChange}
+        runtimeId={modelTuningRuntimeId}
+      />
       <PermissionModeField
         disabled={disabled}
         envVars={envVars}

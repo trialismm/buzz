@@ -72,6 +72,8 @@ import { useAgentDialogDefaults } from "./useAgentDialogDefaults";
 import { AgentDefaultsDialog } from "./AgentDefaultsDialog";
 import { AgentHarnessField } from "./AgentHarnessField";
 import { PermissionModeField } from "./PermissionModeField";
+import { AgentConnectionField } from "./AgentConnectionField";
+import { connectionHiddenEnvKeys } from "@/features/agents/lib/agentConnection";
 import { PERMISSION_MODE_ENV_KEY } from "@/features/agents/lib/permissionMode";
 import { TOOL_POLICY_ENV_KEY } from "@/features/agents/lib/toolPolicy";
 import { ToolPolicyField } from "./ToolPolicyField";
@@ -950,6 +952,13 @@ export function AgentDefinitionDialog({
                   />
                 ) : null}
               </div>
+              <AgentConnectionField
+                disabled={isPending}
+                envVars={envVars}
+                id="persona-connection"
+                onEnvVarsChange={setEnvVars}
+                runtimeId={runtime}
+              />
               <PermissionModeField
                 disabled={isPending}
                 envVars={envVars}
@@ -1023,6 +1032,7 @@ export function AgentDefinitionDialog({
                     hiddenEnvKeys={[
                       PERMISSION_MODE_ENV_KEY,
                       TOOL_POLICY_ENV_KEY,
+                      ...connectionHiddenEnvKeys(runtime),
                       ...(topLevelSecretEnvVar ? [topLevelSecretEnvVar] : []),
                     ]}
                     inheritedEnvVars={inheritedEnvVarsForAdvanced}
