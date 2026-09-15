@@ -235,6 +235,14 @@ pub struct AcpClient {
     standard_usage: StandardUsageTracker,
     /// Known adapter identity for prompt-response usage mapping.
     standard_adapter: Option<StandardAdapterKind>,
+    /// The model each session is running, as the adapter reported it in the
+    /// `session/new` (or post-switch) snapshot. Standard adapters put no model
+    /// in their usage frames, so NIP-AM `model` is filled from here.
+    session_models: std::collections::HashMap<String, String>,
+    /// NIP-AM billing authority for this agent's turns, or `None` when its
+    /// spend has no per-token price (harness login) or the adapter's model
+    /// values are aliases rather than billable ids (Claude).
+    billing_authority: Option<&'static str>,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -555,6 +563,10 @@ impl AcpClient {
                 "codex" | "codex-acp" => Some(StandardAdapterKind::Codex),
                 _ => None,
             };
+        let billing_authority = billing_authority_for(
+            standard_adapter,
+            std::env::var(AGENT_CONNECTION_ENV).ok().as_deref(),
+        );
         let mut child = cmd.spawn()?;
 
         let stdin = child
@@ -590,6 +602,8 @@ impl AcpClient {
             goose_usage: UsageTracker::default(),
             standard_usage: StandardUsageTracker::default(),
             standard_adapter,
+            session_models: std::collections::HashMap::new(),
+            billing_authority,
         })
     }
 
@@ -925,8 +939,38 @@ impl AcpClient {
     /// goose emitted nothing for this turn.
     pub fn take_turn_usage(&mut self) -> Option<TurnUsage> {
         let goose_usage = self.goose_usage.take();
-        let standard_usage = self.standard_usage.take();
+        let standard_usage = self.standard_usage.take().map(|mut usage| {
+            // Standard adapters report counts only; the session snapshot is
+            // the harness's only knowledge of what model those counts bought.
+            // Claude's model values are aliases (`default`, `opus[1m]`) and
+            // its cost is adapter-reported, so only Codex — whose values are
+            // billable ids — gets a model and, on an API-key connection, a
+            // pricing identity the Desktop can price.
+            if self.standard_adapter == Some(StandardAdapterKind::Codex) {
+                if let Some(model) = self.session_models.get(&usage.session_id) {
+                    usage.model = Some(model.clone());
+                    usage.pricing_identity = self.billing_authority.map(|authority| {
+                        buzz_core::agent_turn_metric::PricingIdentity {
+                            authority: authority.to_string(),
+                            model: model.clone(),
+                            cache_class: None,
+                        }
+                    });
+                }
+            }
+            usage
+        });
         goose_usage.or(standard_usage)
+    }
+
+    /// Remember the model `session_id` is running, read from the adapter's
+    /// `session/new` or post-switch snapshot (`configOptions` model category
+    /// `currentValue`, else unstable `models.currentModelId`). Unknown
+    /// snapshots leave any earlier value in place.
+    pub fn note_session_model(&mut self, session_id: &str, snapshot: &serde_json::Value) {
+        if let Some(model) = current_model_from_snapshot(snapshot) {
+            self.session_models.insert(session_id.to_string(), model);
+        }
     }
 
     /// Notify the usage tracker that buzz-acp just spawned a new session.
@@ -2347,6 +2391,48 @@ pub fn extract_model_config_options(result: &serde_json::Value) -> Vec<serde_jso
 /// Returns the `models` object if present: `{ currentModelId, availableModels: [...] }`.
 pub fn extract_model_state(result: &serde_json::Value) -> Option<serde_json::Value> {
     result.get("models").cloned()
+}
+
+/// The model a session is currently running, from a `session/new` or
+/// post-switch snapshot: the model-category config option's `currentValue`
+/// (stable path), else the unstable `models.currentModelId`. Blank values
+/// count as unknown.
+pub fn current_model_from_snapshot(result: &serde_json::Value) -> Option<String> {
+    let from_config = extract_model_config_options(result)
+        .into_iter()
+        .find_map(|opt| {
+            opt.get("currentValue")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        });
+    from_config
+        .or_else(|| {
+            result
+                .pointer("/models/currentModelId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .filter(|model| !model.trim().is_empty())
+}
+
+/// Desktop Connection marker (`lib/agentConnection.ts`): `api-key` means the
+/// agent's turns are billed per token to the owner's developer account.
+const AGENT_CONNECTION_ENV: &str = "BUZZ_AGENT_CONNECTION";
+
+/// NIP-AM billing authority for an adapter on the given connection. Only an
+/// API-key connection has a per-token price; a harness login is billed by
+/// the subscription and gets no authority. Claude is excluded because its
+/// adapter's model values are aliases, not billable ids (and it reports its
+/// own cost anyway).
+fn billing_authority_for(
+    adapter: Option<StandardAdapterKind>,
+    connection: Option<&str>,
+) -> Option<&'static str> {
+    let api_key = connection.is_some_and(|c| c.trim().eq_ignore_ascii_case("api-key"));
+    match (adapter, api_key) {
+        (Some(StandardAdapterKind::Codex), true) => Some("api.openai.com"),
+        _ => None,
+    }
 }
 
 /// Extract the `configId` for the `thought_level` category option from a
@@ -4695,6 +4781,104 @@ mod tests {
         );
         assert_eq!(usage.cumulative_input_tokens, None);
         assert_eq!(usage.cumulative_output_tokens, None);
+        assert_eq!(usage.model, None, "no session snapshot noted → no model");
+        assert_eq!(usage.pricing_identity, None);
+    }
+
+    #[tokio::test]
+    async fn codex_usage_carries_the_session_model_and_prices_only_api_key_turns() {
+        let snapshot = serde_json::json!({
+            "configOptions": [{
+                "id": "model",
+                "category": "model",
+                "currentValue": "gpt-5.3-codex",
+                "options": [{ "value": "gpt-5.3-codex", "name": "GPT-5.3 Codex" }]
+            }]
+        });
+
+        // API-key connection: model + pricing identity on api.openai.com.
+        let mut client = spawn_inert_client().await;
+        client.standard_adapter = Some(StandardAdapterKind::Codex);
+        client.billing_authority =
+            super::billing_authority_for(client.standard_adapter, Some("api-key"));
+        client.note_session_model("codex-session", &snapshot);
+        client.standard_usage.begin_turn("codex-session");
+        client
+            .parse_prompt_response(
+                "codex-session",
+                &prompt_response_usage(90, 10, 140, Some(40), None),
+            )
+            .unwrap();
+        let usage = client.take_turn_usage().expect("prompt usage");
+        assert_eq!(usage.model.as_deref(), Some("gpt-5.3-codex"));
+        assert_eq!(
+            usage.pricing_identity,
+            Some(buzz_core::agent_turn_metric::PricingIdentity {
+                authority: "api.openai.com".to_string(),
+                model: "gpt-5.3-codex".to_string(),
+                cache_class: None,
+            })
+        );
+
+        // Harness login: the model is still known, but the spend has no
+        // per-token price, so no pricing identity is published.
+        let mut client = spawn_inert_client().await;
+        client.standard_adapter = Some(StandardAdapterKind::Codex);
+        client.billing_authority = super::billing_authority_for(client.standard_adapter, None);
+        client.note_session_model("codex-session", &snapshot);
+        client.standard_usage.begin_turn("codex-session");
+        client
+            .parse_prompt_response(
+                "codex-session",
+                &prompt_response_usage(90, 10, 140, Some(40), None),
+            )
+            .unwrap();
+        let usage = client.take_turn_usage().expect("prompt usage");
+        assert_eq!(usage.model.as_deref(), Some("gpt-5.3-codex"));
+        assert_eq!(usage.pricing_identity, None);
+
+        // Claude values are aliases: never a model, never a price.
+        let mut client = spawn_inert_client().await;
+        client.standard_adapter = Some(StandardAdapterKind::Claude);
+        client.billing_authority =
+            super::billing_authority_for(client.standard_adapter, Some("api-key"));
+        assert_eq!(client.billing_authority, None);
+        client.note_session_model(
+            "claude-session",
+            &serde_json::json!({ "configOptions": [{
+                "id": "model", "category": "model", "currentValue": "opus[1m]", "options": []
+            }] }),
+        );
+        client.standard_usage.begin_turn("claude-session");
+        client.handle_session_update(&standard_cost_update("claude-session", 0.042));
+        let usage = client.take_turn_usage().expect("cost usage");
+        assert_eq!(usage.model, None);
+        assert_eq!(usage.pricing_identity, None);
+    }
+
+    #[test]
+    fn current_model_from_snapshot_prefers_config_options_then_models_state() {
+        let stable = serde_json::json!({
+            "configOptions": [{ "configId": "model", "category": "model", "currentValue": "gpt-5.3-codex" }],
+            "models": { "currentModelId": "ignored" }
+        });
+        assert_eq!(
+            super::current_model_from_snapshot(&stable).as_deref(),
+            Some("gpt-5.3-codex")
+        );
+        let unstable = serde_json::json!({ "models": { "currentModelId": "gpt-5.3-codex" } });
+        assert_eq!(
+            super::current_model_from_snapshot(&unstable).as_deref(),
+            Some("gpt-5.3-codex")
+        );
+        let blank = serde_json::json!({
+            "configOptions": [{ "configId": "model", "category": "model", "currentValue": "  " }]
+        });
+        assert_eq!(super::current_model_from_snapshot(&blank), None);
+        assert_eq!(
+            super::current_model_from_snapshot(&serde_json::json!({})),
+            None
+        );
     }
 
     #[tokio::test]

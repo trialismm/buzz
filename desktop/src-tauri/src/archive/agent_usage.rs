@@ -153,6 +153,13 @@ pub struct SeriesBucket {
 pub struct ModelUsage {
     pub harness: Option<String>,
     pub model: Option<String>,
+    /// NIP-AM `pricingIdentity.authority` the rows in this rollup carried
+    /// (`api.openai.com`, …), or `None` when they had no billing identity —
+    /// the consumer must then treat the price as unknown.
+    pub pricing_authority: Option<String>,
+    /// NIP-AM `pricingIdentity.model` — the billable id, keyed separately
+    /// from `model` so an alias and its resolved id never merge.
+    pub pricing_model: Option<String>,
     pub usage: ReportedUsage,
     pub report_count: i64,
     pub has_unknown_usage: bool,
@@ -661,8 +668,20 @@ struct AgentScope {
     bucket_counts: Vec<i64>,
     total: UsageAccumulator,
     report_count: i64,
-    /// Keyed by `(harness, model)` — same model via two harnesses → two rows.
-    models: HashMap<(Option<String>, Option<String>), (UsageAccumulator, i64)>,
+    /// Keyed by [`ModelKey`] — same model via two harnesses, or with and
+    /// without a billing identity, → separate rows.
+    models: HashMap<ModelKey, (UsageAccumulator, i64)>,
+}
+
+/// Per-model rollup key: what ran (`harness`, `model`) plus what it is billed
+/// as (`pricing_authority`, `pricing_model`), so a priced row never absorbs
+/// unpriced turns of the same model.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ModelKey {
+    harness: Option<String>,
+    model: Option<String>,
+    pricing_authority: Option<String>,
+    pricing_model: Option<String>,
 }
 
 /// Compute the full [`AgentUsageSeries`] from already-loaded rows.
@@ -749,7 +768,12 @@ pub(super) fn compute_series(
 
         let model_entry = scope
             .models
-            .entry((row.harness.clone(), row.model.clone()))
+            .entry(ModelKey {
+                harness: row.harness.clone(),
+                model: row.model.clone(),
+                pricing_authority: row.pricing_authority.clone(),
+                pricing_model: row.pricing_model.clone(),
+            })
             .or_insert_with(|| (UsageAccumulator::default(), 0i64));
         model_entry.0.add(&outcome);
         model_entry.1 += 1;
@@ -811,16 +835,18 @@ pub(super) fn compute_series(
             let mut model_rows: Vec<ModelSortKey> = scope
                 .models
                 .into_iter()
-                .map(|((harness, model), (acc, count))| {
+                .map(|(key, (acc, count))| {
                     let sort_val = acc.sort_value();
                     let has_unknown_usage = acc.has_unknown();
                     ModelSortKey {
                         sort_val,
-                        harness: harness.clone(),
-                        model: model.clone(),
+                        harness: key.harness.clone(),
+                        model: key.model.clone(),
                         usage: ModelUsage {
-                            harness,
-                            model,
+                            harness: key.harness,
+                            model: key.model,
+                            pricing_authority: key.pricing_authority,
+                            pricing_model: key.pricing_model,
                             usage: acc.finish(),
                             report_count: count,
                             has_unknown_usage,

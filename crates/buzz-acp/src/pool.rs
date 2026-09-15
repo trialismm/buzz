@@ -1750,6 +1750,11 @@ async fn create_session_and_apply_model(
     // the session is actually running; computed BEFORE the capture emission so
     // the cached configOptions tell the truth about the running session.
     let effort_snapshot = post_switch_snapshot.as_ref().unwrap_or(&resp.raw);
+    // NIP-AM: standard adapters report usage without a model, so the harness
+    // remembers what this session runs from the same authoritative snapshot.
+    agent
+        .acp
+        .note_session_model(&resp.session_id, effort_snapshot);
     let effort_outcome = apply_startup_effort(agent, effort_snapshot, &resp.session_id).await?;
 
     // Emit session config for desktop consumption (config bridge tier 1b).

@@ -48,6 +48,14 @@ export type AgentUsageSeriesBucket = {
 export type AgentUsageModel = {
   harness: string | null;
   model: string | null;
+  /**
+   * NIP-AM `pricingIdentity.authority` the rows carried (`api.openai.com`,
+   * …), or `null` when they had none — price unknown, never inferred from
+   * `model`.
+   */
+  pricingAuthority: string | null;
+  /** NIP-AM `pricingIdentity.model` — the billable id. */
+  pricingModel: string | null;
   usage: ReportedUsage;
   reportCount: number;
   hasUnknownUsage: boolean;

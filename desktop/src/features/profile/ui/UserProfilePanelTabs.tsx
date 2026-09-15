@@ -49,6 +49,7 @@ import { Switch } from "@/shared/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 export function ProfileIngressRow({
+  dense = false,
   disabled,
   disclosureIcon: DisclosureIcon = ChevronRight,
   grouped = false,
@@ -58,6 +59,8 @@ export function ProfileIngressRow({
   testId,
   trailing,
 }: {
+  /** Runtime-tab density: a single-line row at 44px instead of 64px. */
+  dense?: boolean;
   disabled?: boolean;
   disclosureIcon?: LucideIcon;
   grouped?: boolean;
@@ -94,7 +97,8 @@ export function ProfileIngressRow({
     </>
   );
   const className = cn(
-    "flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left",
+    "flex w-full items-center gap-3 px-4 text-left",
+    dense ? "min-h-11 py-2" : "min-h-16 py-3",
     onClick &&
       "transition-colors hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-50",
   );
@@ -727,6 +731,7 @@ export function ProfileRuntimeTabContent({
   onOpenInstance,
   onToggleStartOnLaunch,
   showDiagnosticsIngress,
+  usageSection,
 }: {
   /** Whether the per-agent auto-restart toggle is ON. */
   autoRestartEnabled?: boolean;
@@ -747,6 +752,8 @@ export function ProfileRuntimeTabContent({
   onOpenInstance: (pubkey: string) => void;
   onToggleStartOnLaunch?: () => void;
   showDiagnosticsIngress: boolean;
+  /** The Usage card — rendered directly under Activity so it stays in view. */
+  usageSection?: React.ReactNode;
 }) {
   const startOnLaunchFieldIndex = configurationFields.findIndex(
     (field) => field.label === "Start on launch",
@@ -779,7 +786,8 @@ export function ProfileRuntimeTabContent({
     !hasConfigurationRows &&
     !modelSettings &&
     !hasInstances &&
-    !needsRestart
+    !needsRestart &&
+    !usageSection
   ) {
     return null;
   }
@@ -824,7 +832,7 @@ export function ProfileRuntimeTabContent({
               aria-disabled={!canToggleStartOnLaunch || startOnLaunchPending}
               aria-label={startOnLaunchField.label}
               className={cn(
-                "flex min-h-16 items-center gap-3 px-4 py-3",
+                "flex min-h-11 items-center gap-3 px-4 py-2",
                 canToggleStartOnLaunch &&
                   "cursor-pointer transition-colors hover:bg-muted/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               )}
@@ -860,6 +868,7 @@ export function ProfileRuntimeTabContent({
           ) : null}
           {showDiagnosticsIngress ? (
             <ProfileIngressRow
+              dense
               grouped
               icon={ScrollText}
               label="Harness log"
@@ -870,6 +879,7 @@ export function ProfileRuntimeTabContent({
           ) : null}
         </ProfileSectionGroup>
       ) : null}
+      {usageSection}
       {hasConfigurationRows ? (
         <ProfileSectionGroup
           testId="user-profile-agent-configuration-section"

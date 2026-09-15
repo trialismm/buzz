@@ -14,6 +14,7 @@ import { RestartDiffBadge } from "@/features/agents/ui/RestartDiffBadge";
 import { ProfileRuntimeQuickControls } from "./ProfileRuntimeQuickControls";
 import { profileRuntimeQuickControlsState } from "./profileRuntimeQuickControlsState";
 import { AgentConfigPanel } from "@/features/agents/ui/AgentConfigPanel";
+import { AgentUsageSection } from "@/features/profile/ui/AgentUsageSection";
 import type { IdentityArchiveActions } from "@/features/identity-archive/hooks";
 import { getPresenceLabel } from "@/features/presence/lib/presence";
 import { PresenceDot } from "@/features/presence/ui/PresenceBadge";
@@ -583,6 +584,11 @@ export function ProfileSummaryView({
                   onOpenDiagnostics={onOpenDiagnostics}
                   onOpenInstance={onOpenInstance}
                   showDiagnosticsIngress={showDiagnosticsIngress}
+                  usageSection={
+                    isOwner === true && managedAgent !== undefined ? (
+                      <AgentUsageSection agent={managedAgent} />
+                    ) : undefined
+                  }
                 />
                 {isOwner === true && managedAgent !== undefined ? (
                   <AgentConfigPanel

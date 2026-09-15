@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { AgentStatusBadge } from "@/features/agents/ui/AgentStatusBadge";
+import { cn } from "@/shared/lib/cn";
 import { canonicalNpub, truncateNpub } from "@/shared/lib/pubkey";
 import {
   HoverCopyIndicator,
@@ -506,6 +507,9 @@ function ProfileFieldRow({
   const isActionable = Boolean(field.onClick);
   const isTrailingDisplay =
     variant === "runtime" && field.label === "Status" && field.displayNode;
+  // Runtime-tab rows are dense: a one-line status or setting does not need
+  // the 64px touch height the Info sections use for copyable identity rows.
+  const rowSize = variant === "runtime" ? "min-h-11 py-2" : "min-h-16 py-3";
   const { copied, copy } = useCopyFeedback({
     label: field.label,
     value: field.copyValue ?? "",
@@ -554,7 +558,10 @@ function ProfileFieldRow({
     return (
       <button
         aria-label={`Open ${field.label}`}
-        className="group flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className={cn(
+          "group flex w-full items-center gap-3 px-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          rowSize,
+        )}
         data-testid={field.testId}
         onClick={field.onClick}
         title={`Open ${field.label}`}
@@ -569,7 +576,10 @@ function ProfileFieldRow({
     return (
       <button
         aria-label={`Copy ${field.label}`}
-        className="group flex min-h-16 w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className={cn(
+          "group flex w-full items-center gap-3 px-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          rowSize,
+        )}
         data-testid={field.testId}
         onClick={() => void copy()}
         title={`Copy ${field.label}`}
@@ -582,7 +592,7 @@ function ProfileFieldRow({
 
   return (
     <div
-      className="flex min-h-16 items-center gap-3 px-4 py-3"
+      className={cn("flex items-center gap-3 px-4", rowSize)}
       data-testid={field.testId}
     >
       {content}

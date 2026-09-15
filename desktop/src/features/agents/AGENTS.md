@@ -417,6 +417,21 @@ with a TypeScript lookup table or an id comparison in a component.
     starts even on a machine with no harness login. Only Claude and Codex
     are in the catalog; other runtimes render no field.
 
+21. **Usage and cost come from archived NIP-AM turn metrics, and cost has
+    two provenances that are never summed.** The profile Runtime tab's
+    Usage card (`profile/ui/AgentUsageSection.tsx`) reads
+    `get_agent_usage_series` through `profile/lib/useAgentUsageSeries.ts`
+    with DST-safe local-midnight boundaries (`profile/lib/usageWindow.ts`).
+    *Reported* cost is what the harness published (`estimatedCostUsd` —
+    Claude Code prices its own turns). *Estimated* cost is
+    `lib/modelPricing.ts`: the owner's rate table (built-in OpenAI defaults +
+    localStorage overrides) × the tokens of per-model rows that carry a
+    NIP-AM `pricingIdentity`; rows without one are "price unknown", never
+    priced from the session `model` alias. The harness stamps `model` and,
+    on an API-key connection, `pricingIdentity` only for Codex — Claude's
+    adapter model values are aliases (`default`, `opus[1m]`). Cost is shown
+    for API-key connections only; a harness login shows tokens alone.
+
 ## Channel-only runtime controls
 
 Desktop observer controls identify a channel, not a thread session. The harness
