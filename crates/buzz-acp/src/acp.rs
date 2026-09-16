@@ -41,6 +41,49 @@ pub struct EnvVar {
     pub value: String,
 }
 
+/// An MCP server reached over HTTP — the `McpServerHttp` variant of the ACP
+/// schema (`type: "http"`). `headers` ride as name/value pairs like `env`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct McpServerHttp {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub name: String,
+    pub url: String,
+    pub headers: Vec<EnvVar>,
+}
+
+impl McpServerHttp {
+    /// Build the `type: "http"` variant.
+    pub fn new(name: String, url: String, headers: Vec<EnvVar>) -> Self {
+        Self {
+            kind: "http",
+            name,
+            url,
+            headers,
+        }
+    }
+}
+
+/// One entry of `session/new`'s `mcpServers`: the ACP schema distinguishes the
+/// variants by the presence of `type`, so stdio stays untagged (the shape
+/// every adapter accepted before HTTP existed) and HTTP carries `type`.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(untagged)]
+pub enum McpServerSpec {
+    Stdio(McpServer),
+    Http(McpServerHttp),
+}
+
+impl McpServerSpec {
+    /// The server's name as the adapter will register it.
+    pub fn name(&self) -> &str {
+        match self {
+            McpServerSpec::Stdio(s) => &s.name,
+            McpServerSpec::Http(h) => &h.name,
+        }
+    }
+}
+
 /// Stop reason returned by `session/prompt` when the agent finishes a turn.
 ///
 /// Maps to the `stopReason` field in the `SessionPromptResponse`.
@@ -692,7 +735,7 @@ impl AcpClient {
     pub async fn session_new_full(
         &mut self,
         cwd: &str,
-        mcp_servers: Vec<McpServer>,
+        mcp_servers: Vec<McpServerSpec>,
         system_prompt: Option<SystemPromptTransport<'_>>,
         session_title: Option<&str>,
         claude_options: Option<serde_json::Value>,
@@ -740,7 +783,7 @@ impl AcpClient {
     pub async fn session_new(
         &mut self,
         cwd: &str,
-        mcp_servers: Vec<McpServer>,
+        mcp_servers: Vec<McpServerSpec>,
         system_prompt: Option<SystemPromptTransport<'_>>,
         session_title: Option<&str>,
     ) -> Result<String, AcpError> {

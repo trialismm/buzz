@@ -432,6 +432,24 @@ with a TypeScript lookup table or an id comparison in a component.
     adapter model values are aliases (`default`, `opus[1m]`). Cost is shown
     for API-key connections only; a harness login shows tokens alone.
 
+22. **Connectors are persona-owned MCP servers carried on the env as JSON.**
+    `lib/agentConnectors.ts` owns `BUZZ_ACP_MCP_SERVERS` — a JSON array of
+    `{kind:"stdio", name, command, args, env}` / `{kind:"http", name, url,
+    headers}` on the persona env (local-only tier, like the other env-carried
+    choices, so header and env tokens never reach the relay). Edited only in
+    the create/edit persona dialog (`AgentConnectorsField`); the instance
+    Advanced env editor hides the key. The harness
+    (`crates/buzz-acp/src/connectors.rs`) parses the same shape at spawn and
+    appends the entries after the built-in dev MCP server in every
+    `session/new` (`McpServerSpec`: stdio untagged, HTTP with `type`), drops
+    bad entries one at a time with a warning, and rejects the built-in name,
+    duplicates and `__` in names (buzz-agent's tool separator). Verified
+    against the installed adapters: claude-agent-acp and codex-acp accept
+    both kinds from `session/new`; buzz-agent takes stdio only, so HTTP
+    connectors are skipped for it. The profile MCP section lists persona
+    connectors as "From the agent's persona" rows next to the servers parsed
+    from the runtime's own config file.
+
 ## Channel-only runtime controls
 
 Desktop observer controls identify a channel, not a thread session. The harness

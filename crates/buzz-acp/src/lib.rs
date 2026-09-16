@@ -3,6 +3,7 @@
 mod acp;
 mod channel_context;
 mod config;
+mod connectors;
 mod delivery_fallback;
 mod engram_fetch;
 mod filter;
@@ -25,7 +26,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
-use acp::{AcpClient, EnvVar, McpServer};
+use acp::{AcpClient, EnvVar, McpServer, McpServerSpec};
 use anyhow::{ensure, Context, Result};
 use buzz_core::kind::{
     KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, KIND_STREAM_MESSAGE,
@@ -6088,11 +6089,28 @@ async fn run_models(args: ModelsArgs) -> Result<()> {
     Ok(())
 }
 
-fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
-    if config.mcp_command.is_empty() {
-        return vec![];
+/// The `session/new` MCP list: the built-in dev MCP server (when the runtime
+/// has one) followed by the owner's persona Connectors
+/// (`BUZZ_ACP_MCP_SERVERS`). Connector problems are logged and skipped, one
+/// entry at a time, so a bad connector never blocks the session.
+fn build_mcp_servers(config: &Config) -> Vec<McpServerSpec> {
+    let builtin = build_builtin_mcp_server(config).map(McpServerSpec::Stdio);
+    let parsed = connectors::parse_connectors(
+        &config.mcp_servers,
+        builtin.as_ref().map(McpServerSpec::name),
+        connectors::http_supported(&config.agent_command),
+    );
+    for warning in &parsed.warnings {
+        tracing::warn!("connector skipped: {warning}");
     }
-    vec![McpServer {
+    builtin.into_iter().chain(parsed.servers).collect()
+}
+
+fn build_builtin_mcp_server(config: &Config) -> Option<McpServer> {
+    if config.mcp_command.is_empty() {
+        return None;
+    }
+    Some(McpServer {
         name: std::path::Path::new(&config.mcp_command)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -6142,7 +6160,7 @@ fn build_mcp_servers(config: &Config) -> Vec<McpServer> {
             }
             env
         },
-    }]
+    })
 }
 
 #[cfg(test)]
@@ -9416,6 +9434,31 @@ mod build_mcp_servers_tests {
     use super::*;
     use std::sync::Mutex;
 
+    fn stdio_env(server: &McpServerSpec) -> &[EnvVar] {
+        match server {
+            McpServerSpec::Stdio(stdio) => &stdio.env,
+            McpServerSpec::Http(_) => panic!("built-in server is stdio"),
+        }
+    }
+
+    #[test]
+    fn persona_connectors_follow_the_builtin_server() {
+        let mut config = test_config();
+        config.mcp_servers = r#"[
+            {"kind":"http","name":"remote","url":"https://x/mcp"},
+            {"kind":"stdio","name":"test-mcp-server","command":"shadow"}
+        ]"#
+        .into();
+        let servers = build_mcp_servers(&config);
+        let names: Vec<&str> = servers.iter().map(McpServerSpec::name).collect();
+        assert_eq!(
+            names,
+            vec!["test-mcp-server", "remote"],
+            "built-in first; a connector may not shadow it"
+        );
+        assert!(matches!(servers[1], McpServerSpec::Http(_)));
+    }
+
     /// Env-var-touching tests must run serially — env vars are process-global.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -9426,6 +9469,7 @@ mod build_mcp_servers_tests {
             agent_command: "goose".into(),
             agent_args: vec!["acp".into()],
             mcp_command: "test-mcp-server".into(),
+            mcp_servers: String::new(),
             idle_timeout_secs: config::DEFAULT_IDLE_TIMEOUT_SECS,
             max_turn_duration_secs: config::DEFAULT_MAX_TURN_DURATION_SECS,
             agents: 1,
@@ -9477,7 +9521,9 @@ mod build_mcp_servers_tests {
         let config = test_config();
         let servers = build_mcp_servers(&config);
         assert_eq!(servers.len(), 1);
-        let server = &servers[0];
+        let McpServerSpec::Stdio(server) = &servers[0] else {
+            panic!("built-in server is stdio");
+        };
         assert_eq!(server.name, "test-mcp-server");
 
         let names: Vec<&str> = server.env.iter().map(|e| e.name.as_str()).collect();
@@ -9499,7 +9545,9 @@ mod build_mcp_servers_tests {
         let servers = build_mcp_servers(&config);
         std::env::remove_var("BUZZ_AUTH_TAG");
 
-        let server = &servers[0];
+        let McpServerSpec::Stdio(server) = &servers[0] else {
+            panic!("built-in server is stdio");
+        };
         let auth_tag_env = server.env.iter().find(|e| e.name == "BUZZ_AUTH_TAG");
         assert!(
             auth_tag_env.is_some(),
@@ -9516,7 +9564,9 @@ mod build_mcp_servers_tests {
         let servers = build_mcp_servers(&config);
         std::env::remove_var("BUZZ_AUTH_TAG");
 
-        let server = &servers[0];
+        let McpServerSpec::Stdio(server) = &servers[0] else {
+            panic!("built-in server is stdio");
+        };
         let has_auth_tag = server.env.iter().any(|e| e.name == "BUZZ_AUTH_TAG");
         assert!(!has_auth_tag, "empty BUZZ_AUTH_TAG should not be forwarded");
     }
@@ -9529,8 +9579,7 @@ mod build_mcp_servers_tests {
         let servers = build_mcp_servers(&config);
         std::env::remove_var("BUZZ_ACP_DISPLAY_NAME");
 
-        let entry = servers[0]
-            .env
+        let entry = stdio_env(&servers[0])
             .iter()
             .find(|e| e.name == "BUZZ_ACP_DISPLAY_NAME");
         assert_eq!(
@@ -9550,8 +9599,7 @@ mod build_mcp_servers_tests {
         // Absent, not empty-valued: dev-mcp distinguishes the two and only
         // falls back to the npub when the key is missing or blank.
         assert!(
-            !servers[0]
-                .env
+            !stdio_env(&servers[0])
                 .iter()
                 .any(|e| e.name == "BUZZ_ACP_DISPLAY_NAME"),
             "unset display name should not add the key"
@@ -9567,8 +9615,7 @@ mod build_mcp_servers_tests {
         std::env::remove_var("BUZZ_ACP_DISPLAY_NAME");
 
         assert!(
-            !servers[0]
-                .env
+            !stdio_env(&servers[0])
                 .iter()
                 .any(|e| e.name == "BUZZ_ACP_DISPLAY_NAME"),
             "empty display name should not be forwarded"
@@ -9592,7 +9639,7 @@ mod build_mcp_servers_tests {
         config.mcp_command = "/opt/bin/my-mcp-server".into();
         let servers = build_mcp_servers(&config);
         assert_eq!(servers.len(), 1);
-        assert_eq!(servers[0].name, "my-mcp-server");
+        assert_eq!(servers[0].name(), "my-mcp-server");
     }
 
     #[test]
@@ -9614,7 +9661,8 @@ mod build_mcp_servers_tests {
         let servers = build_mcp_servers(&config);
         assert_eq!(servers.len(), 1);
         assert_eq!(
-            servers[0].name, "mcp",
+            servers[0].name(),
+            "mcp",
             "Path::new(\".\").file_stem() is None — should fall back to \"mcp\""
         );
     }
@@ -9655,6 +9703,7 @@ mod error_outcome_emission_tests {
             agent_command: "true".into(),
             agent_args: vec![],
             mcp_command: "test-mcp-server".into(),
+            mcp_servers: String::new(),
             idle_timeout_secs: config::DEFAULT_IDLE_TIMEOUT_SECS,
             max_turn_duration_secs: config::DEFAULT_MAX_TURN_DURATION_SECS,
             agents: 1,

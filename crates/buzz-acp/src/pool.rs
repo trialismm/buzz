@@ -31,7 +31,7 @@ use uuid::Uuid;
 
 use crate::acp::{
     extract_model_config_options, extract_model_state, extract_thought_level_config_id,
-    model_in_catalog, resolve_model_switch_method, AcpClient, AcpError, EnvVar, McpServer,
+    model_in_catalog, resolve_model_switch_method, AcpClient, AcpError, EnvVar, McpServerSpec,
     ModelSwitchMethod, StopReason, SystemPromptTransport,
 };
 use crate::config::{compose_scoped_session_title, DedupMode, PermissionMode};
@@ -788,7 +788,7 @@ impl ChannelInfoResolver {
 }
 
 pub struct PromptContext {
-    pub mcp_servers: Vec<McpServer>,
+    pub mcp_servers: Vec<McpServerSpec>,
     pub initial_message: Option<String>,
     pub idle_timeout: Duration,
     pub max_turn_duration: Duration,
@@ -1832,11 +1832,11 @@ async fn create_session_and_apply_model(
 }
 
 fn mcp_servers_with_git_origin(
-    servers: &[McpServer],
+    servers: &[McpServerSpec],
     channel_id: Option<Uuid>,
     channel_type: Option<&str>,
     agent_name: Option<&str>,
-) -> Vec<McpServer> {
+) -> Vec<McpServerSpec> {
     let mut servers = servers.to_vec();
     let origin = match (channel_id, channel_type) {
         (Some(channel_id), Some("stream")) => Some(EnvVar {
@@ -1852,8 +1852,12 @@ fn mcp_servers_with_git_origin(
         (None, _) => None,
     };
     if let Some(origin) = origin {
+        // Only a local process has an env to receive the origin; an HTTP
+        // connector is someone else's server.
         for server in &mut servers {
-            server.env.push(origin.clone());
+            if let McpServerSpec::Stdio(stdio) = server {
+                stdio.env.push(origin.clone());
+            }
         }
     }
     servers
@@ -5523,12 +5527,19 @@ pub(crate) mod tests {
         SessionScope::Conversation { channel_id }
     }
 
-    fn test_mcp_server() -> McpServer {
-        McpServer {
+    fn test_mcp_server() -> McpServerSpec {
+        McpServerSpec::Stdio(crate::acp::McpServer {
             name: "dev".into(),
             command: "buzz-dev-mcp".into(),
             args: vec![],
             env: vec![],
+        })
+    }
+
+    fn stdio_env(server: &McpServerSpec) -> &[EnvVar] {
+        match server {
+            McpServerSpec::Stdio(stdio) => &stdio.env,
+            McpServerSpec::Http(_) => panic!("expected a stdio server"),
         }
     }
 
@@ -5586,11 +5597,10 @@ pub(crate) mod tests {
             Some("stream"),
             None,
         );
-        assert!(servers[0].env.iter().any(|entry| {
+        assert!(stdio_env(&servers[0]).iter().any(|entry| {
             entry.name == "BUZZ_GIT_ORIGIN_CHANNEL_ID" && entry.value == channel_id.to_string()
         }));
-        assert!(!servers[0]
-            .env
+        assert!(!stdio_env(&servers[0])
             .iter()
             .any(|entry| entry.name == "BUZZ_GIT_ORIGIN_AGENT_NAME"));
     }
@@ -5603,11 +5613,10 @@ pub(crate) mod tests {
             Some("dm"),
             Some("Builder"),
         );
-        assert!(servers[0].env.iter().any(|entry| {
+        assert!(stdio_env(&servers[0]).iter().any(|entry| {
             entry.name == "BUZZ_GIT_ORIGIN_AGENT_NAME" && entry.value == "Builder"
         }));
-        assert!(!servers[0]
-            .env
+        assert!(!stdio_env(&servers[0])
             .iter()
             .any(|entry| entry.name == "BUZZ_GIT_ORIGIN_CHANNEL_ID"));
     }

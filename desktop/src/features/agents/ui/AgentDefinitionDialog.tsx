@@ -73,7 +73,9 @@ import { AgentDefaultsDialog } from "./AgentDefaultsDialog";
 import { AgentHarnessField } from "./AgentHarnessField";
 import { PermissionModeField } from "./PermissionModeField";
 import { AgentConnectionField } from "./AgentConnectionField";
+import { AgentConnectorsField } from "./AgentConnectorsField";
 import { connectionHiddenEnvKeys } from "@/features/agents/lib/agentConnection";
+import { AGENT_CONNECTORS_ENV_KEY } from "@/features/agents/lib/agentConnectors";
 import { PERMISSION_MODE_ENV_KEY } from "@/features/agents/lib/permissionMode";
 import { TOOL_POLICY_ENV_KEY } from "@/features/agents/lib/toolPolicy";
 import { ToolPolicyField } from "./ToolPolicyField";
@@ -971,6 +973,12 @@ export function AgentDefinitionDialog({
                 id="persona-tool-policy"
                 onEnvVarsChange={setEnvVars}
               />
+              <AgentConnectorsField
+                disabled={isPending}
+                envVars={envVars}
+                id="persona-connectors"
+                onEnvVarsChange={setEnvVars}
+              />
             </section>
           </div>
 
@@ -1032,6 +1040,7 @@ export function AgentDefinitionDialog({
                     hiddenEnvKeys={[
                       PERMISSION_MODE_ENV_KEY,
                       TOOL_POLICY_ENV_KEY,
+                      AGENT_CONNECTORS_ENV_KEY,
                       ...connectionHiddenEnvKeys(runtime),
                       ...(topLevelSecretEnvVar ? [topLevelSecretEnvVar] : []),
                     ]}

@@ -12,7 +12,15 @@ import {
   Pencil,
   Server,
 } from "lucide-react";
-import { useAgentConfigSurface } from "../hooks";
+import {
+  useAgentConfigSurface,
+  useManagedAgentsQuery,
+  usePersonasQuery,
+} from "../hooks";
+import {
+  type AgentConnector,
+  readAgentConnectors,
+} from "@/features/agents/lib/agentConnectors";
 import { cn } from "@/shared/lib/cn";
 import { Spinner } from "@/shared/ui/spinner";
 import { PanelSectionGroup } from "@/shared/ui/PanelSectionGroup";
@@ -49,6 +57,8 @@ type AgentConfigSurfaceRowsProps = {
   advancedMode?: "collapsed" | "flat";
   data: RuntimeConfigSurface;
   onEdit?: () => void;
+  /** Connectors from the agent's persona env (`lib/agentConnectors.ts`). */
+  personaConnectors?: AgentConnector[];
   sections?: readonly AgentConfigPanelSection[];
 };
 
@@ -320,6 +330,19 @@ export function AgentConfigPanel({
   sections = ALL_AGENT_CONFIG_SECTIONS,
 }: Props) {
   const { data, isLoading, error } = useAgentConfigSurface(pubkey);
+  // Persona Connectors ride the env (`BUZZ_ACP_MCP_SERVERS`), instance env
+  // winning, so the section can list what the harness will actually attach
+  // next to the servers parsed from the runtime's own config file.
+  const agentsQuery = useManagedAgentsQuery();
+  const personasQuery = usePersonasQuery();
+  const personaConnectors = React.useMemo(() => {
+    const agent = agentsQuery.data?.find((a) => a.pubkey === pubkey);
+    const persona = personasQuery.data?.find((p) => p.id === agent?.personaId);
+    return readAgentConnectors({
+      ...(persona?.envVars ?? {}),
+      ...(agent?.envVars ?? {}),
+    });
+  }, [agentsQuery.data, personasQuery.data, pubkey]);
   const flatStateTitle = sections.includes("model")
     ? "Model settings"
     : sections.includes("mcp")
@@ -366,6 +389,7 @@ export function AgentConfigPanel({
       advancedMode={advancedMode}
       data={data}
       onEdit={onEdit}
+      personaConnectors={personaConnectors}
       sections={sections}
     />
   );
@@ -375,6 +399,7 @@ export function AgentConfigSurfaceRows({
   advancedMode = "collapsed",
   data,
   onEdit,
+  personaConnectors = [],
   sections = ALL_AGENT_CONFIG_SECTIONS,
 }: AgentConfigSurfaceRowsProps) {
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
@@ -405,7 +430,9 @@ export function AgentConfigSurfaceRows({
     }
     return true;
   }) as [keyof NormalizedConfig, NormalizedField][];
-  const showMcpServers = shouldRenderMcpServers(runtimeId, extensions);
+  const showMcpServers =
+    shouldRenderMcpServers(runtimeId, extensions) ||
+    personaConnectors.length > 0;
   const showModelSection = sections.includes("model");
   const showMcpSection = sections.includes("mcp");
   const showAdvancedSection = sections.includes("advanced");
@@ -441,6 +468,7 @@ export function AgentConfigSurfaceRows({
             <McpServersSection
               extensions={extensions}
               mcpConfigFilePath={mcpConfigFilePath}
+              personaConnectors={personaConnectors}
               runtimeId={runtimeId}
               variant="profile"
             />
@@ -487,6 +515,7 @@ export function AgentConfigSurfaceRows({
       <McpServersSection
         extensions={extensions}
         mcpConfigFilePath={mcpConfigFilePath}
+        personaConnectors={personaConnectors}
         runtimeId={runtimeId}
         variant="compact"
       />

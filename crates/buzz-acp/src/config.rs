@@ -267,6 +267,14 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_MCP_COMMAND", default_value = "")]
     pub mcp_command: String,
 
+    /// Owner Connectors: extra MCP servers for every session, as a JSON array
+    /// (`[{"kind":"stdio","name":…,"command":…,"args":[…],"env":{…}},
+    /// {"kind":"http","name":…,"url":…,"headers":{…}}]`). Set by the Desktop
+    /// from the agent's persona; appended after the built-in dev MCP server.
+    /// Blank = none.
+    #[arg(long, env = "BUZZ_ACP_MCP_SERVERS", default_value = "")]
+    pub mcp_servers: String,
+
     /// Idle timeout: max seconds of silence before killing a turn.
     /// Resets on any agent stdout activity.
     #[arg(long, env = "BUZZ_ACP_IDLE_TIMEOUT")]
@@ -562,6 +570,8 @@ pub struct Config {
     pub agent_command: String,
     pub agent_args: Vec<String>,
     pub mcp_command: String,
+    /// Owner Connectors JSON (`BUZZ_ACP_MCP_SERVERS`); blank = none.
+    pub mcp_servers: String,
     pub idle_timeout_secs: u64,
     pub max_turn_duration_secs: u64,
     pub agents: u32,
@@ -1181,6 +1191,7 @@ impl Config {
             agent_command,
             agent_args,
             mcp_command: args.mcp_command,
+            mcp_servers: args.mcp_servers,
             idle_timeout_secs,
             max_turn_duration_secs,
             agents: args.agents,
@@ -1570,6 +1581,7 @@ mod tests {
             agent_command: "goose".into(),
             agent_args: vec!["acp".into()],
             mcp_command: "".into(),
+            mcp_servers: String::new(),
             idle_timeout_secs: DEFAULT_IDLE_TIMEOUT_SECS,
             max_turn_duration_secs: DEFAULT_MAX_TURN_DURATION_SECS,
             agents: 1,
