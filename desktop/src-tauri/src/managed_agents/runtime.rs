@@ -248,7 +248,6 @@ pub fn build_managed_agent_summary(
             &key.relay_url,
             global_config,
             super::owner_only_access_build(),
-            super::acp_session_policy(app.state::<crate::app_state::AppState>().inner()),
         );
         (runtime, current)
     });
@@ -309,6 +308,7 @@ pub fn build_managed_agent_summary(
         idle_timeout_seconds: record.idle_timeout_seconds,
         max_turn_duration_seconds: record.max_turn_duration_seconds,
         parallelism: record.parallelism,
+        session_policy: super::effective_acp_session_policy(record, personas),
         system_prompt: effective_prompt,
         avatar_url: record.avatar_url.clone(),
         model: effective_model,
@@ -826,8 +826,9 @@ pub fn spawn_agent_child(
             }
         }
     }
-    // Resolve once and stamp the same value onto the snapshot below.
-    let acp_session_policy = super::apply_app_acp_session_policy_env(app, &mut command);
+    // Resolve once and stamp the same value onto the environment and snapshot.
+    let acp_session_policy = super::effective_acp_session_policy(record, &personas);
+    super::apply_acp_session_policy_env(&mut command, acp_session_policy);
 
     crate::build_identity::apply_demo_config_home(&mut command)?;
     // Publish-first replay floor: written AFTER the `descriptor.env` loop, the
