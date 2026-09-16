@@ -26,6 +26,7 @@ mod nest;
 pub(crate) mod parallelism;
 mod persona_avatars;
 pub(crate) mod persona_events;
+pub(crate) mod persona_workdir;
 mod personas;
 #[cfg(windows)]
 mod process_lifecycle;

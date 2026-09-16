@@ -580,8 +580,36 @@ pub fn spawn_agent_child(
     };
 
     let mut command = std::process::Command::new(&resolved_acp_command);
-    if let Some(home) = super::default_agent_workdir() {
-        command.current_dir(home);
+    // Working directory: the shared nest, or the persona's own mini-nest when
+    // its env asks for one (`BUZZ_PERSONA_WORKDIR=own`) — rendered here so a
+    // freshly enabled folder exists before the harness starts in it.
+    let own_workdir = if super::persona_workdir::wants_own_workdir(&descriptor.env) {
+        match (record.persona_id.as_deref(), super::nest_dir()) {
+            (Some(persona_id), Some(nest)) => {
+                match super::persona_workdir::ensure_persona_workdir(&nest, persona_id) {
+                    Ok(dir) => Some(dir),
+                    Err(error) => {
+                        eprintln!(
+                            "buzz-desktop: persona workdir unavailable, using the nest: {error}"
+                        );
+                        None
+                    }
+                }
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    match own_workdir {
+        Some(dir) => {
+            command.current_dir(dir);
+        }
+        None => {
+            if let Some(home) = super::default_agent_workdir() {
+                command.current_dir(home);
+            }
+        }
     }
     command.stdin(std::process::Stdio::null());
     command.stdout(std::process::Stdio::from(stdout));

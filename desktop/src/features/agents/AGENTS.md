@@ -463,6 +463,24 @@ with a TypeScript lookup table or an id comparison in a component.
     `session/new` (`note_session_channel`); a session without one only logs
     the URL.
 
+24. **A persona's own working directory is an env-carried opt-in and a
+    mini-nest that carries its Skills.** `lib/personaWorkdir.ts` owns
+    `BUZZ_PERSONA_WORKDIR=own` on the persona env (local-only, hidden in the
+    raw editors, restart badge via the env diff). At spawn
+    (`managed_agents/persona_workdir.rs`) the Desktop renders
+    `<nest>/personas/<persona-id>/` with `ensure_nest_at` — same AGENTS.md
+    conventions and the built-in `buzz-cli` skill — and starts the harness
+    there, so `session/new`'s `cwd` follows. Owner skills live in
+    `<folder>/.agents/skills/<folder>/SKILL.md` (frontmatter `name`
+    required) and are linked into every known runtime skill dir
+    (`known_skill_dirs()`: `.claude/skills`, `.codex/skills`,
+    `.goose/skills`) so each harness discovers them by its own convention;
+    buzz-agent scans `.agents/skills` directly. The `buzz-cli` name is
+    reserved. The Skills panel (`PersonaWorkdirField`) lists, imports (OS
+    folder picker → copy + link) and removes skills for a saved persona;
+    the create dialog shows only the choice. Unix only for links (the nest
+    has the same limit).
+
 ## Channel-only runtime controls
 
 Desktop observer controls identify a channel, not a thread session. The harness

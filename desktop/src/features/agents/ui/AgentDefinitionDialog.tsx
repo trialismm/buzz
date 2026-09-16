@@ -74,8 +74,10 @@ import { AgentHarnessField } from "./AgentHarnessField";
 import { PermissionModeField } from "./PermissionModeField";
 import { AgentConnectionField } from "./AgentConnectionField";
 import { AgentConnectorsField } from "./AgentConnectorsField";
+import { PersonaWorkdirField } from "./PersonaWorkdirField";
 import { connectionHiddenEnvKeys } from "@/features/agents/lib/agentConnection";
 import { AGENT_CONNECTORS_ENV_KEY } from "@/features/agents/lib/agentConnectors";
+import { PERSONA_WORKDIR_ENV_KEY } from "@/features/agents/lib/personaWorkdir";
 import { PERMISSION_MODE_ENV_KEY } from "@/features/agents/lib/permissionMode";
 import { TOOL_POLICY_ENV_KEY } from "@/features/agents/lib/toolPolicy";
 import { ToolPolicyField } from "./ToolPolicyField";
@@ -979,6 +981,17 @@ export function AgentDefinitionDialog({
                 id="persona-connectors"
                 onEnvVarsChange={setEnvVars}
               />
+              <PersonaWorkdirField
+                disabled={isPending}
+                envVars={envVars}
+                id="persona-workdir"
+                onEnvVarsChange={setEnvVars}
+                personaId={
+                  initialValues && "id" in initialValues
+                    ? initialValues.id
+                    : null
+                }
+              />
             </section>
           </div>
 
@@ -1041,6 +1054,7 @@ export function AgentDefinitionDialog({
                       PERMISSION_MODE_ENV_KEY,
                       TOOL_POLICY_ENV_KEY,
                       AGENT_CONNECTORS_ENV_KEY,
+                      PERSONA_WORKDIR_ENV_KEY,
                       ...connectionHiddenEnvKeys(runtime),
                       ...(topLevelSecretEnvVar ? [topLevelSecretEnvVar] : []),
                     ]}

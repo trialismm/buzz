@@ -8,6 +8,7 @@ import { PermissionModeField } from "./PermissionModeField";
 import { AgentConnectionField } from "./AgentConnectionField";
 import { connectionHiddenEnvKeys } from "@/features/agents/lib/agentConnection";
 import { AGENT_CONNECTORS_ENV_KEY } from "@/features/agents/lib/agentConnectors";
+import { PERSONA_WORKDIR_ENV_KEY } from "@/features/agents/lib/personaWorkdir";
 import { TOOL_POLICY_ENV_KEY } from "@/features/agents/lib/toolPolicy";
 import { ToolPolicyField } from "./ToolPolicyField";
 import {
@@ -135,6 +136,7 @@ export function EditAgentAdvancedFields({
       TOOL_POLICY_ENV_KEY,
       // Persona-owned: Connectors are edited on the persona, never per instance.
       AGENT_CONNECTORS_ENV_KEY,
+      PERSONA_WORKDIR_ENV_KEY,
       ...connectionHiddenEnvKeys(modelTuningRuntimeId),
       ...(isBuzzAgentRuntime(modelTuningRuntimeId)
         ? [BUZZ_AGENT_THINKING_EFFORT]
