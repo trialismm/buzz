@@ -77,6 +77,7 @@ import { AgentConnectorsField } from "./AgentConnectorsField";
 import { PersonaWorkdirField } from "./PersonaWorkdirField";
 import { connectionHiddenEnvKeys } from "@/features/agents/lib/agentConnection";
 import { AGENT_CONNECTORS_ENV_KEY } from "@/features/agents/lib/agentConnectors";
+import { AGENT_INSTRUCTIONS_TEMPLATE } from "@/features/agents/lib/agentInstructionsTemplate";
 import { PERSONA_WORKDIR_ENV_KEY } from "@/features/agents/lib/personaWorkdir";
 import { PERMISSION_MODE_ENV_KEY } from "@/features/agents/lib/permissionMode";
 import { TOOL_POLICY_ENV_KEY } from "@/features/agents/lib/toolPolicy";
@@ -799,12 +800,28 @@ export function AgentDefinitionDialog({
               />
 
               <div className="space-y-1.5">
-                <label
-                  className="text-sm font-medium text-foreground"
-                  htmlFor="persona-system-prompt"
-                >
-                  Agent instructions
-                </label>
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    className="text-sm font-medium text-foreground"
+                    htmlFor="persona-system-prompt"
+                  >
+                    Agent instructions
+                  </label>
+                  {systemPrompt.trim().length === 0 ? (
+                    <button
+                      className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                      data-testid="persona-system-prompt-template"
+                      disabled={isPending}
+                      onClick={() => {
+                        setHasUserChanges(true);
+                        setSystemPrompt(AGENT_INSTRUCTIONS_TEMPLATE);
+                      }}
+                      type="button"
+                    >
+                      Insert template
+                    </button>
+                  ) : null}
+                </div>
                 <div className={PERSONA_FIELD_SHELL_CLASS}>
                   <Textarea
                     className={cn(
@@ -814,7 +831,7 @@ export function AgentDefinitionDialog({
                     disabled={isPending}
                     id="persona-system-prompt"
                     onChange={(event) => setSystemPrompt(event.target.value)}
-                    placeholder="Describe what this agent should do."
+                    placeholder="Role, tone, priorities and limits. How to work inside Buzz is already covered — use Insert template for a starting point."
                     value={systemPrompt}
                   />
                 </div>
