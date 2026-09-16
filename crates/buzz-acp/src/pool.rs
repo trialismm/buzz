@@ -1755,6 +1755,10 @@ async fn create_session_and_apply_model(
     agent
         .acp
         .note_session_model(&resp.session_id, effort_snapshot);
+    agent.acp.note_session_channel(
+        &resp.session_id,
+        channel.scope.map(SessionScope::channel_id),
+    );
     let effort_outcome = apply_startup_effort(agent, effort_snapshot, &resp.session_id).await?;
 
     // Emit session config for desktop consumption (config bridge tier 1b).
@@ -5371,7 +5375,15 @@ pub(crate) async fn post_agent_message(
         &[],
         &[],
     ) {
-        Ok(b) => b,
+        // Marked as a harness notice so the delivery fallback never mistakes
+        // it for the agent's own reply (`delivery_fallback::HARNESS_NOTICE_TAG`).
+        Ok(b) => match nostr::Tag::parse([crate::delivery_fallback::HARNESS_NOTICE_TAG, label]) {
+            Ok(tag) => b.tag(tag),
+            Err(e) => {
+                tracing::warn!(channel = %channel_id, "{label}: tag failed: {e}");
+                return;
+            }
+        },
         Err(e) => {
             tracing::warn!(channel = %channel_id, "{label}: build failed: {e}");
             return;

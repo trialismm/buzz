@@ -286,6 +286,11 @@ pub struct AcpClient {
     /// spend has no per-token price (harness login) or the adapter's model
     /// values are aliases rather than billable ids (Claude).
     billing_authority: Option<&'static str>,
+    /// The channel each session serves, so a sign-in link can be posted
+    /// where the owner is talking to the agent.
+    session_channels: std::collections::HashMap<String, uuid::Uuid>,
+    /// URL elicitations in flight, for the completion notice.
+    elicitations: crate::elicitation::ElicitationLog,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -470,6 +475,12 @@ fn build_client_capabilities() -> serde_json::Value {
         "auth": {
             "terminal": true
         },
+        // URL elicitation: adapters run MCP OAuth (and any other browser
+        // sign-in) only when the client can show the owner a link. The
+        // harness posts it to the session's channel — see `elicitation.rs`.
+        "elicitation": {
+            "url": {}
+        },
         // Signal to goose that we handle `_goose/unstable/session/update`
         // notifications. Without this the custom notification is suppressed
         // on goose's side and usage data is never emitted.
@@ -647,6 +658,8 @@ impl AcpClient {
             standard_adapter,
             session_models: std::collections::HashMap::new(),
             billing_authority,
+            session_channels: std::collections::HashMap::new(),
+            elicitations: crate::elicitation::ElicitationLog::default(),
         })
     }
 
@@ -1014,6 +1027,96 @@ impl AcpClient {
         if let Some(model) = current_model_from_snapshot(snapshot) {
             self.session_models.insert(session_id.to_string(), model);
         }
+    }
+
+    /// Remember which channel `session_id` serves (`None` for sessions with
+    /// no channel scope), so sign-in links reach the owner there.
+    pub fn note_session_channel(&mut self, session_id: &str, channel_id: Option<uuid::Uuid>) {
+        match channel_id {
+            Some(channel_id) => {
+                self.session_channels
+                    .insert(session_id.to_string(), channel_id);
+            }
+            None => {
+                self.session_channels.remove(session_id);
+            }
+        }
+    }
+
+    /// `elicitation/create`: accept a URL elicitation at once and post the
+    /// link to the owner; decline every other mode (no form UI here).
+    async fn handle_elicitation_create(&mut self, msg: &serde_json::Value) -> Result<(), AcpError> {
+        let params = &msg["params"];
+        let mode = params["mode"].as_str().unwrap_or("");
+        let url = params["url"].as_str().filter(|u| !u.trim().is_empty());
+        let action = if mode == "url" && url.is_some() {
+            "accept"
+        } else {
+            "decline"
+        };
+        if let Some(id) = msg.get("id") {
+            let reply = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "action": action }
+            });
+            self.write_ndjson(&reply).await?;
+        }
+        let Some(url) = url else {
+            tracing::warn!("elicitation declined: mode={mode:?} has no URL to show");
+            return Ok(());
+        };
+        let session_id = params["sessionId"].as_str().unwrap_or("");
+        let message = params["message"].as_str().unwrap_or("").to_string();
+        let elicitation_id = params["elicitationId"].as_str().unwrap_or("").to_string();
+        let channel_id = self.session_channels.get(session_id).copied();
+        tracing::info!(
+            session_id,
+            elicitation_id,
+            channel = ?channel_id,
+            "sign-in requested: {message} → {url}"
+        );
+        self.elicitations.begin(
+            &elicitation_id,
+            crate::elicitation::PendingElicitation {
+                channel_id,
+                message: message.clone(),
+            },
+        );
+        crate::elicitation::post(
+            channel_id,
+            &crate::elicitation::sign_in_notice(&message, url),
+            "sign-in notice",
+        )
+        .await;
+        Ok(())
+    }
+
+    /// `elicitation/complete`: acknowledge and tell the owner it worked.
+    async fn handle_elicitation_complete(
+        &mut self,
+        msg: &serde_json::Value,
+    ) -> Result<(), AcpError> {
+        if let Some(id) = msg.get("id") {
+            let reply = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": {} });
+            self.write_ndjson(&reply).await?;
+        }
+        let elicitation_id = msg["params"]["elicitationId"].as_str().unwrap_or("");
+        let Some(pending) = self.elicitations.finish(elicitation_id) else {
+            tracing::debug!(
+                elicitation_id,
+                "elicitation/complete for an unknown elicitation"
+            );
+            return Ok(());
+        };
+        tracing::info!(elicitation_id, "sign-in completed: {}", pending.message);
+        crate::elicitation::post(
+            pending.channel_id,
+            &crate::elicitation::signed_in_notice(&pending.message),
+            "sign-in done notice",
+        )
+        .await;
+        Ok(())
     }
 
     /// Notify the usage tracker that buzz-acp just spawned a new session.
@@ -1410,6 +1513,12 @@ impl AcpClient {
                     }
                     "session/request_permission" => {
                         self.handle_permission_request(&msg).await?;
+                    }
+                    "elicitation/create" => {
+                        self.handle_elicitation_create(&msg).await?;
+                    }
+                    "elicitation/complete" => {
+                        self.handle_elicitation_complete(&msg).await?;
                     }
                     other => {
                         // If the unknown message has an id, it's a request expecting a reply.
@@ -1858,6 +1967,12 @@ impl AcpClient {
                             }
                             "session/request_permission" => {
                                 self.handle_permission_request(&msg).await?;
+                            }
+                            "elicitation/create" => {
+                                self.handle_elicitation_create(&msg).await?;
+                            }
+                            "elicitation/complete" => {
+                                self.handle_elicitation_complete(&msg).await?;
                             }
                             other => {
                                 // If the unknown message has an id, it's a request expecting a reply.
@@ -4897,6 +5012,44 @@ mod tests {
         let usage = client.take_turn_usage().expect("cost usage");
         assert_eq!(usage.model, None);
         assert_eq!(usage.pricing_identity, None);
+    }
+
+    #[tokio::test]
+    async fn url_elicitations_are_accepted_and_remembered_other_modes_declined() {
+        let mut client = spawn_inert_client().await;
+        client.note_session_channel("s1", Some(uuid::Uuid::nil()));
+        let create = serde_json::json!({
+            "jsonrpc": "2.0", "id": 7, "method": "elicitation/create",
+            "params": {
+                "mode": "url", "sessionId": "s1", "elicitationId": "e1",
+                "message": "Authenticate with MCP server linear",
+                "url": "https://example.com/auth"
+            }
+        });
+        client.handle_elicitation_create(&create).await.unwrap();
+        let pending = client
+            .elicitations
+            .finish("e1")
+            .expect("remembered until complete");
+        assert_eq!(pending.channel_id, Some(uuid::Uuid::nil()));
+        assert_eq!(pending.message, "Authenticate with MCP server linear");
+
+        let form = serde_json::json!({
+            "jsonrpc": "2.0", "id": 8, "method": "elicitation/create",
+            "params": { "mode": "form", "sessionId": "s1", "elicitationId": "e2", "message": "m" }
+        });
+        client.handle_elicitation_create(&form).await.unwrap();
+        assert!(
+            client.elicitations.finish("e2").is_none(),
+            "form mode is declined, not tracked"
+        );
+
+        // Completing an unknown elicitation is harmless.
+        let complete = serde_json::json!({
+            "jsonrpc": "2.0", "id": 9, "method": "elicitation/complete",
+            "params": { "elicitationId": "nope" }
+        });
+        client.handle_elicitation_complete(&complete).await.unwrap();
     }
 
     #[test]

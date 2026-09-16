@@ -243,8 +243,32 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
 }
 
 /// Ground truth from the relay: did this agent publish a kind-9 message in
+/// Tag the harness puts on notices it posts under the agent's key (sign-in
+/// links, failure notices). Those are not the agent answering, so neither
+/// self-post evidence source may count them — otherwise a notice posted
+/// mid-turn silences the fallback and the real reply never reaches the
+/// channel.
+pub const HARNESS_NOTICE_TAG: &str = "buzz-harness-notice";
+
+/// Whether an event is a harness notice rather than the agent's own post.
+pub fn is_harness_notice(event: &nostr::Event) -> bool {
+    event.tags.iter().any(|tag| {
+        tag.as_slice()
+            .first()
+            .is_some_and(|name| name == HARNESS_NOTICE_TAG)
+    })
+}
+
+fn json_is_harness_notice(event: &serde_json::Value) -> bool {
+    event["tags"].as_array().is_some_and(|tags| {
+        tags.iter()
+            .any(|tag| tag[0].as_str() == Some(HARNESS_NOTICE_TAG))
+    })
+}
+
 /// `channel_id` at or after `since_unix` (minus skew)? `None` when the query
 /// failed or timed out — callers must treat that as unverified, not as absent.
+/// Harness notices are skipped (see [`HARNESS_NOTICE_TAG`]).
 pub async fn relay_has_agent_post(
     rest: &crate::relay::RestClient,
     channel_id: Uuid,
@@ -261,14 +285,17 @@ pub async fn relay_has_agent_post(
         .since(nostr::Timestamp::from(
             since_unix.saturating_sub(CLOCK_SKEW_SECS),
         ))
-        .limit(1);
+        // A few, not one: the newest post may be a harness notice.
+        .limit(8);
     match tokio::time::timeout(
         RELAY_CHECK_TIMEOUT,
         rest.query(std::slice::from_ref(&filter)),
     )
     .await
     {
-        Ok(Ok(json)) => json.as_array().map(|events| !events.is_empty()),
+        Ok(Ok(json)) => json
+            .as_array()
+            .map(|events| events.iter().any(|event| !json_is_harness_notice(event))),
         Ok(Err(error)) => {
             tracing::warn!(channel_id = %channel_id, "delivery fallback: relay check failed: {error}");
             None
@@ -603,6 +630,24 @@ mod tests {
         assert_eq!(ch.parent_event_id.as_deref(), Some(root.as_str()));
         let unanchored = fallback_thread_tags(&probe(true, false, None));
         assert!(unanchored.root_event_id.is_none());
+    }
+
+    #[test]
+    fn harness_notices_are_not_agent_posts() {
+        let keys = Keys::generate();
+        let plain = kind9(&keys, &[&["h", "chan"]]);
+        assert!(!is_harness_notice(&plain));
+        let notice = kind9(
+            &keys,
+            &[&["h", "chan"], &[HARNESS_NOTICE_TAG, "sign-in notice"]],
+        );
+        assert!(is_harness_notice(&notice));
+        assert!(json_is_harness_notice(
+            &serde_json::to_value(&notice).unwrap()
+        ));
+        assert!(!json_is_harness_notice(
+            &serde_json::to_value(&plain).unwrap()
+        ));
     }
 
     #[test]

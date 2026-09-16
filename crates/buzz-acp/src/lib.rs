@@ -5,6 +5,7 @@ mod channel_context;
 mod config;
 mod connectors;
 mod delivery_fallback;
+mod elicitation;
 mod engram_fetch;
 mod filter;
 mod observer;
@@ -2888,6 +2889,9 @@ async fn tokio_main() -> Result<()> {
         );
     }
 
+    // Sign-in links (ACP URL elicitation) are posted from the read loop.
+    elicitation::install(relay.rest_client());
+
     let ctx = Arc::new(PromptContext {
         mcp_servers: build_mcp_servers(&config),
         initial_message: config.initial_message.clone(),
@@ -3461,11 +3465,14 @@ async fn tokio_main() -> Result<()> {
 
                             if config.ignore_self && buzz_event.event.pubkey.to_hex() == pubkey_hex {
                                 // Our own post: the delivery fallback needs to know the
-                                // agent answered this channel itself.
-                                pool.self_posts.record(
-                                    buzz_event.channel_id,
-                                    buzz_event.event.created_at.as_secs(),
-                                );
+                                // agent answered this channel itself. A harness notice
+                                // (sign-in link, failure notice) is not an answer.
+                                if !crate::delivery_fallback::is_harness_notice(&buzz_event.event) {
+                                    pool.self_posts.record(
+                                        buzz_event.channel_id,
+                                        buzz_event.event.created_at.as_secs(),
+                                    );
+                                }
                                 tracing::debug!(channel_id = %buzz_event.channel_id, "dropping self-authored event");
                                 continue;
                             }

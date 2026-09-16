@@ -450,6 +450,19 @@ with a TypeScript lookup table or an id comparison in a component.
     connectors as "From the agent's persona" rows next to the servers parsed
     from the runtime's own config file.
 
+23. **Browser sign-ins (OAuth connectors) ride ACP URL elicitation and land
+    in the channel.** The harness advertises
+    `clientCapabilities.elicitation.url` and, on `elicitation/create`
+    (`mode: "url"`), replies `accept` at once and posts the link to the
+    session's channel as the agent (`crates/buzz-acp/src/elicitation.rs`);
+    `elicitation/complete` posts a confirmation. The adapter owns the OAuth
+    callback (Claude Code's localhost listener), so the Desktop needs no
+    special UI — message links already open in the system browser
+    (`shared/ui/markdown/ExternalLinkAnchor.tsx`). Form-mode elicitations are
+    declined (no form UI). The channel is remembered per session at
+    `session/new` (`note_session_channel`); a session without one only logs
+    the URL.
+
 ## Channel-only runtime controls
 
 Desktop observer controls identify a channel, not a thread session. The harness
