@@ -186,6 +186,29 @@ export function assignProjectToFolder(
   return { ...store, assignments: { ...rest, [projectAddress]: folderId } };
 }
 
+/**
+ * Apply a new folder order (from a drag). Ids that are missing from
+ * `orderedIds` keep their relative order after the listed ones; unknown ids
+ * are ignored.
+ */
+export function reorderProjectFolders(
+  store: ProjectFolderStore,
+  orderedIds: readonly string[],
+): ProjectFolderStore {
+  const byId = new Map(store.folders.map((f) => [f.id, f]));
+  const listed = orderedIds.flatMap((id) => {
+    const folder = byId.get(id);
+    if (!folder) return [];
+    byId.delete(id);
+    return [folder];
+  });
+  const folders = [...listed, ...byId.values()].map((folder, order) => ({
+    ...folder,
+    order,
+  }));
+  return { ...store, folders };
+}
+
 export function setProjectFolderCollapsed(
   store: ProjectFolderStore,
   id: string,

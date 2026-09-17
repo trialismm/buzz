@@ -10,6 +10,7 @@ import {
   readProjectFolderStore,
   removeProjectFolder,
   renameProjectFolder,
+  reorderProjectFolders,
   setProjectFolderCollapsed,
   writeProjectFolderStore,
 } from "./projectFolders.ts";
@@ -127,4 +128,19 @@ test("folders persist per relay and viewer", () => {
       value: previous,
     });
   }
+});
+
+test("reordering rewrites order, ignores unknown ids and keeps unlisted folders", () => {
+  let store = addProjectFolder(EMPTY_PROJECT_FOLDER_STORE, "a", "Ongoing");
+  store = addProjectFolder(store, "b", "Pending");
+  store = addProjectFolder(store, "c", "Killed");
+  const moved = reorderProjectFolders(store, ["c", "ghost", "a"]);
+  assert.deepEqual(
+    moved.folders.map((f) => [f.id, f.order]),
+    [
+      ["c", 0],
+      ["a", 1],
+      ["b", 2],
+    ],
+  );
 });

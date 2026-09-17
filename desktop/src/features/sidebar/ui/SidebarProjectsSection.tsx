@@ -100,10 +100,18 @@ import {
   readProjectFolderStore,
   removeProjectFolder,
   renameProjectFolder,
+  reorderProjectFolders,
   setProjectFolderCollapsed,
   writeProjectFolderStore,
 } from "@/features/sidebar/lib/projectFolders";
 import { SectionNameDialog } from "@/features/sidebar/ui/ChannelSectionDialogs";
+import {
+  DraggableChannelRow,
+  DroppableSectionBody,
+  DroppableUngroupedBody,
+  SidebarDndContext,
+  SortableSectionShell,
+} from "@/features/sidebar/ui/SidebarDnd";
 import {
   ProjectFolderMoveMenu,
   ProjectFolderRow,
@@ -313,43 +321,45 @@ function SidebarProjectsSectionContent() {
 
     return (
       <React.Fragment key={project.id}>
-        <SidebarProjectRow
-          canDelete={canDeleteProject(project, currentPubkey, ownerProfiles)}
-          childCount={childChannels.length}
-          deleteDisabled={deleteProjectMutation.isPending}
-          isActive={isActive}
-          isExpanded={isExpanded}
-          onDelete={() => setProjectToDelete(project)}
-          onOpen={() => {
-            void goProject(project.id);
-          }}
-          onRemove={() => handleRemove(project)}
-          onToggleExpanded={() => setProjectExpanded(project, !isExpanded)}
-          folderMenu={
-            <ProjectFolderMoveMenu
-              currentFolderId={
-                folderStore.assignments[project.projectAddress] ?? null
-              }
-              folders={folderStore.folders}
-              onCreateFolder={() =>
-                setFolderDialog({
-                  mode: "create",
-                  projectAddress: project.projectAddress,
-                })
-              }
-              onMove={(folderId) =>
-                updateFolders((store) =>
-                  assignProjectToFolder(
-                    store,
-                    project.projectAddress,
-                    folderId,
-                  ),
-                )
-              }
-            />
-          }
-          project={project}
-        />
+        <DraggableChannelRow channelId={project.projectAddress}>
+          <SidebarProjectRow
+            canDelete={canDeleteProject(project, currentPubkey, ownerProfiles)}
+            childCount={childChannels.length}
+            deleteDisabled={deleteProjectMutation.isPending}
+            isActive={isActive}
+            isExpanded={isExpanded}
+            onDelete={() => setProjectToDelete(project)}
+            onOpen={() => {
+              void goProject(project.id);
+            }}
+            onRemove={() => handleRemove(project)}
+            onToggleExpanded={() => setProjectExpanded(project, !isExpanded)}
+            folderMenu={
+              <ProjectFolderMoveMenu
+                currentFolderId={
+                  folderStore.assignments[project.projectAddress] ?? null
+                }
+                folders={folderStore.folders}
+                onCreateFolder={() =>
+                  setFolderDialog({
+                    mode: "create",
+                    projectAddress: project.projectAddress,
+                  })
+                }
+                onMove={(folderId) =>
+                  updateFolders((store) =>
+                    assignProjectToFolder(
+                      store,
+                      project.projectAddress,
+                      folderId,
+                    ),
+                  )
+                }
+              />
+            }
+            project={project}
+          />
+        </DraggableChannelRow>
         {isExpanded
           ? childChannels.map(({ binding, channel }) => {
               const ChannelIcon =
@@ -422,40 +432,83 @@ function SidebarProjectsSectionContent() {
       {!collapsed ? (
         <SidebarGroupContent id="sidebar-projects">
           {projects.length > 0 ? (
-            <SidebarMenu data-testid="sidebar-projects">
-              {groupedProjects.ungrouped.map(renderProject)}
-              {groupedProjects.folders.map(({ folder, projects: filed }) => {
-                const isFolderCollapsed =
-                  folderStore.collapsed[folder.id] === true;
-                return (
-                  <React.Fragment key={folder.id}>
-                    <ProjectFolderRow
-                      collapsed={isFolderCollapsed}
-                      count={filed.length}
-                      folder={folder}
-                      onDelete={() =>
-                        updateFolders((store) =>
-                          removeProjectFolder(store, folder.id),
-                        )
-                      }
-                      onRename={() =>
-                        setFolderDialog({ mode: "rename", folder })
-                      }
-                      onToggle={() =>
-                        updateFolders((store) =>
-                          setProjectFolderCollapsed(
-                            store,
-                            folder.id,
-                            !isFolderCollapsed,
-                          ),
-                        )
-                      }
-                    />
-                    {isFolderCollapsed ? null : filed.map(renderProject)}
-                  </React.Fragment>
-                );
-              })}
-            </SidebarMenu>
+            <SidebarDndContext
+              channels={projects.map((project) => ({
+                id: project.projectAddress,
+                name: project.name,
+              }))}
+              itemOverlayIcon={<ProjectChannelIcon className="opacity-60" />}
+              onAssignChannel={(projectAddress, folderId) =>
+                updateFolders((store) =>
+                  assignProjectToFolder(store, projectAddress, folderId),
+                )
+              }
+              onReorderSections={(orderedIds) =>
+                updateFolders((store) =>
+                  reorderProjectFolders(store, orderedIds),
+                )
+              }
+              onUnassignChannel={(projectAddress) =>
+                updateFolders((store) =>
+                  assignProjectToFolder(store, projectAddress, null),
+                )
+              }
+              sectionIds={folderStore.folders.map((folder) => folder.id)}
+              sections={folderStore.folders}
+            >
+              <SidebarMenu data-testid="sidebar-projects">
+                {/* Dropping here takes a project out of its folder; the
+                  min height keeps a target when every project is filed. */}
+                <DroppableUngroupedBody
+                  className={cn(
+                    "flex flex-col gap-(--sidebar-row-gap)",
+                    folderStore.folders.length > 0 && "min-h-2",
+                  )}
+                >
+                  {groupedProjects.ungrouped.map(renderProject)}
+                </DroppableUngroupedBody>
+                {groupedProjects.folders.map(({ folder, projects: filed }) => {
+                  const isFolderCollapsed =
+                    folderStore.collapsed[folder.id] === true;
+                  return (
+                    <SortableSectionShell key={folder.id} sectionId={folder.id}>
+                      {({ dragHandleProps, isDragging }) => (
+                        <DroppableSectionBody
+                          className="flex flex-col gap-(--sidebar-row-gap)"
+                          sectionId={folder.id}
+                        >
+                          <ProjectFolderRow
+                            collapsed={isFolderCollapsed}
+                            count={filed.length}
+                            dragHandleProps={dragHandleProps}
+                            folder={folder}
+                            isDragging={isDragging}
+                            onDelete={() =>
+                              updateFolders((store) =>
+                                removeProjectFolder(store, folder.id),
+                              )
+                            }
+                            onRename={() =>
+                              setFolderDialog({ mode: "rename", folder })
+                            }
+                            onToggle={() =>
+                              updateFolders((store) =>
+                                setProjectFolderCollapsed(
+                                  store,
+                                  folder.id,
+                                  !isFolderCollapsed,
+                                ),
+                              )
+                            }
+                          />
+                          {isFolderCollapsed ? null : filed.map(renderProject)}
+                        </DroppableSectionBody>
+                      )}
+                    </SortableSectionShell>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarDndContext>
           ) : isPending ? null : (
             <p className="px-2 py-1 text-xs text-sidebar-foreground/50">
               No projects yet

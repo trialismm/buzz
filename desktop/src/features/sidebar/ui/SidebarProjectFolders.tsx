@@ -1,3 +1,4 @@
+import type * as React from "react";
 import {
   ChevronRight,
   FolderInput,
@@ -34,14 +35,19 @@ import { SidebarMenuLabel } from "@/shared/ui/sidebar-menu-label";
 export function ProjectFolderRow({
   collapsed,
   count,
+  dragHandleProps,
   folder,
+  isDragging,
   onDelete,
   onRename,
   onToggle,
 }: {
   collapsed: boolean;
   count: number;
+  /** From `SortableSectionShell`: dragging the row reorders folders. */
+  dragHandleProps?: React.HTMLAttributes<HTMLElement>;
   folder: ProjectFolder;
+  isDragging?: boolean;
   onDelete: () => void;
   onRename: () => void;
   onToggle: () => void;
@@ -51,8 +57,12 @@ export function ProjectFolderRow({
       <ContextMenuTrigger asChild>
         <SidebarMenuItem>
           <SidebarMenuButton
+            {...dragHandleProps}
             aria-expanded={!collapsed}
-            className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
+            className={cn(
+              "touch-none text-sidebar-foreground/60 hover:text-sidebar-foreground",
+              isDragging && "opacity-30",
+            )}
             data-testid={`sidebar-project-folder-${folder.id}`}
             onClick={onToggle}
             tooltip={folder.name}

@@ -150,7 +150,14 @@ export function SortableSectionShell({
   );
 }
 
-export function DragOverlayChannel({ name }: { name: string }) {
+export function DragOverlayChannel({
+  icon,
+  name,
+}: {
+  /** Replaces the channel hash — the Projects section passes a folder glyph. */
+  icon?: React.ReactNode;
+  name: string;
+}) {
   return (
     <div
       data-buzz-flat
@@ -158,7 +165,7 @@ export function DragOverlayChannel({ name }: { name: string }) {
       data-sidebar-drag-overlay
       data-testid="sidebar-channel-drag-overlay"
     >
-      <Hash className="h-4 w-4 shrink-0 text-sidebar-foreground/60" />
+      {icon ?? <Hash className="h-4 w-4 shrink-0 text-sidebar-foreground/60" />}
       <span className="truncate">{name}</span>
     </div>
   );
@@ -186,10 +193,13 @@ export function SidebarDndContext({
   channels,
   sections,
   children,
+  itemOverlayIcon,
   onAssignChannel,
   onUnassignChannel,
   onReorderSections,
 }: {
+  /** Drag-overlay glyph for items; defaults to the channel hash. */
+  itemOverlayIcon?: React.ReactNode;
   sectionIds: string[];
   channels: { id: string; name: string }[];
   sections: { id: string; name: string }[];
@@ -272,7 +282,10 @@ export function SidebarDndContext({
       </SortableContext>
       <DragOverlay>
         {activeDragItem?.type === "channel" ? (
-          <DragOverlayChannel name={activeDragItem.channelName} />
+          <DragOverlayChannel
+            icon={itemOverlayIcon}
+            name={activeDragItem.channelName}
+          />
         ) : activeDragItem?.type === "section" ? (
           <DragOverlaySection name={activeDragItem.sectionName} />
         ) : null}
