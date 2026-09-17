@@ -107,6 +107,7 @@ import {
   setProjectFolderCollapsed,
   writeProjectFolderStore,
 } from "@/features/sidebar/lib/projectFolders";
+import { ChannelCacheTimer } from "@/features/sidebar/ui/ChannelCacheTimer";
 import { SectionNameDialog } from "@/features/sidebar/ui/ChannelSectionDialogs";
 import {
   DraggableChannelRow,
@@ -392,6 +393,10 @@ function SidebarProjectsSectionContent() {
                   >
                     <ChannelIcon className="h-3.5 w-3.5" />
                     <SidebarMenuLabel>{`#${channel.name}`}</SidebarMenuLabel>
+                    <ChannelCacheTimer
+                      channelId={channel.id}
+                      className="ml-auto"
+                    />
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               );
@@ -856,6 +861,10 @@ function SidebarProjectRow({
             <SidebarMenuLabel className={cn(!isActive && "opacity-80")}>
               {project.name}
             </SidebarMenuLabel>
+            <ChannelCacheTimer
+              channelId={project.projectChannelId}
+              className="ml-auto"
+            />
           </SidebarMenuButton>
           {hasChildren ? (
             <SidebarMenuAction

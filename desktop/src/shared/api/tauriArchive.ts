@@ -523,6 +523,37 @@ export async function getAgentUsageSeries(
 }
 
 /**
+ * Latest archived turn metric per (channel, agent) — mirrors
+ * `archive/cache_heads.rs`. `reportedAt` (Unix seconds) is the end of the
+ * agent's last turn, i.e. when the provider's prompt cache was last refreshed.
+ */
+export type ChannelCacheHead = {
+  channelId: string;
+  agentPubkey: string;
+  sessionId: string | null;
+  reportedAt: number;
+  harness: string;
+  model: string | null;
+  /** Context-window occupancy after the turn; null for older harness builds. */
+  contextTokens: number | null;
+  turnInputTokens: number | null;
+  turnOutputTokens: number | null;
+  turnCacheReadTokens: number | null;
+  turnCacheWriteTokens: number | null;
+  turnCostUsd: number | null;
+  pricingAuthority: string | null;
+  pricingModel: string | null;
+};
+
+export async function getChannelCacheHeads(
+  sinceUnix: number,
+): Promise<ChannelCacheHead[]> {
+  return invokeTauri<ChannelCacheHead[]>("get_channel_cache_heads", {
+    sinceUnix,
+  });
+}
+
+/**
  * Read a paginated page of archived raw events for a scope.
  *
  * Returns at most `limit` raw Nostr events (default 50) in newest-first order.

@@ -22,6 +22,7 @@ import {
 import type { Channel, PresenceStatus } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { useNow } from "@/shared/lib/useNow";
+import { ChannelCacheTimer } from "@/features/sidebar/ui/ChannelCacheTimer";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -339,6 +340,9 @@ export function ChannelMenuButton({
           testId={`channel-agent-provenance-${channel.id}`}
         />
       ) : null}
+      {activeWorking ? null : (
+        <ChannelCacheTimer channelId={channel.id} isActive={isActive} />
+      )}
       {activeWorking ? (
         <ChannelWorkingBadge
           channelName={channel.name}

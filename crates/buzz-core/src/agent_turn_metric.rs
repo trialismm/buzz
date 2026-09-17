@@ -157,6 +157,14 @@ pub struct AgentTurnMetricPayload {
     /// treat omission as "price unknown".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pricing_identity: Option<PricingIdentity>,
+
+    /// Context-window occupancy at end of turn, in tokens, as the adapter
+    /// reported it (`usage_update.used`). This is the size of the prompt the
+    /// next request will resend — what a prompt-cache miss re-reads — and is
+    /// NOT derivable from `turn.inputTokens`, which sums every model call in
+    /// the turn. Omitted when the adapter reports no occupancy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u64>,
 }
 
 fn default_delta_reliable() -> bool {
@@ -256,6 +264,7 @@ mod tests {
             delta_reliable: true,
             stop_reason: Some(StopReason::EndTurn),
             pricing_identity: None,
+            context_tokens: None,
         }
     }
 
@@ -402,6 +411,7 @@ mod tests {
             delta_reliable: true,
             stop_reason: None,
             pricing_identity: None,
+            context_tokens: None,
         }
     }
 
@@ -426,6 +436,7 @@ mod tests {
             delta_reliable: true,
             stop_reason: None,
             pricing_identity: None,
+            context_tokens: None,
         }
     }
 

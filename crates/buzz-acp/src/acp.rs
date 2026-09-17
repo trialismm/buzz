@@ -294,6 +294,10 @@ pub struct AcpClient {
     session_channels: std::collections::HashMap<String, uuid::Uuid>,
     /// URL elicitations in flight, for the completion notice.
     elicitations: crate::elicitation::ElicitationLog,
+    /// Latest context-window occupancy per session (`usage_update.used`) —
+    /// the prompt size a cache miss would re-read; published as NIP-AM
+    /// `contextTokens`.
+    session_context_tokens: std::collections::HashMap<String, u64>,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -672,6 +676,7 @@ impl AcpClient {
             billing_authority,
             session_channels: std::collections::HashMap::new(),
             elicitations: crate::elicitation::ElicitationLog::default(),
+            session_context_tokens: std::collections::HashMap::new(),
         })
     }
 
@@ -1033,7 +1038,12 @@ impl AcpClient {
             }
             usage
         });
-        goose_usage.or(standard_usage)
+        goose_usage.or(standard_usage).map(|mut usage| {
+            if usage.context_tokens.is_none() {
+                usage.context_tokens = self.session_context_tokens.get(&usage.session_id).copied();
+            }
+            usage
+        })
     }
 
     /// Remember the model `session_id` is running, read from the adapter's
@@ -2157,6 +2167,17 @@ impl AcpClient {
     /// Claude. Unlike Goose's payload, `used`/`size` are context occupancy and
     /// are intentionally not mapped to token accounting.
     fn handle_standard_usage_update(&mut self, msg: &serde_json::Value) {
+        // Context occupancy is adapter-agnostic: any standard adapter that
+        // reports `used` tells us how large the next prompt will be.
+        if let (Some(session_id), Some(used)) = (
+            msg.pointer("/params/sessionId")
+                .and_then(serde_json::Value::as_str),
+            msg.pointer("/params/update/used")
+                .and_then(serde_json::Value::as_u64),
+        ) {
+            self.session_context_tokens
+                .insert(session_id.to_string(), used);
+        }
         if self.standard_adapter != Some(StandardAdapterKind::Claude) {
             return;
         }
@@ -4951,6 +4972,28 @@ mod tests {
             "params": { "elicitationId": "nope" }
         });
         client.handle_elicitation_complete(&complete).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn usage_update_occupancy_is_published_as_context_tokens() {
+        let mut client = spawn_inert_client().await;
+        client.standard_adapter = Some(StandardAdapterKind::Claude);
+        client.standard_usage.begin_turn("s1");
+        client.handle_session_update(&serde_json::json!({
+            "jsonrpc": "2.0", "method": "session/update",
+            "params": { "sessionId": "s1", "update": {
+                "sessionUpdate": "usage_update", "used": 83899, "size": 1000000,
+                "cost": { "amount": 0.288, "currency": "USD" }
+            } }
+        }));
+        let usage = client.take_turn_usage().expect("cost usage");
+        assert_eq!(usage.context_tokens, Some(83899));
+
+        // Another session's occupancy is never borrowed.
+        client.standard_usage.begin_turn("s2");
+        client.handle_session_update(&standard_cost_update("s2", 0.01));
+        let other = client.take_turn_usage().expect("cost usage");
+        assert_eq!(other.context_tokens, None);
     }
 
     #[test]

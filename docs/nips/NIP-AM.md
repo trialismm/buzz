@@ -124,6 +124,12 @@ The `content` field decrypts to a UTF-8 JSON object:
     "cacheClass": "ephemeral"                    // cache-write class; omit when not applicable
   },
 
+  // Context-window occupancy at end of turn, in tokens, when the harness
+  // reports it: the size of the prompt the next request resends, i.e. what a
+  // prompt-cache miss re-reads. NOT derivable from turn.inputTokens, which sums
+  // every model call in the turn. OPTIONAL; omit (never null) when unknown.
+  "contextTokens": 83899,
+
   "stopReason": "end_turn"               // optional
 }
 ```

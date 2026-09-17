@@ -481,6 +481,22 @@ with a TypeScript lookup table or an id comparison in a component.
     the create dialog shows only the choice. Unix only for links (the nest
     has the same limit).
 
+25. **Prompt-cache timers are estimates fed by archived turn metrics.** The
+    harness stamps NIP-AM `contextTokens` from the adapter's
+    `usage_update.used` (context occupancy — `turn.inputTokens` sums every
+    model call in a turn, so it is not the context size).
+    `get_channel_cache_heads` (`archive/cache_heads.rs`) returns the latest
+    metric per (channel, agent); `lib/useChannelCacheHeads.ts` keeps the one
+    from an agent managed here; `lib/cacheTimer.ts` turns it into a countdown
+    from the end of that turn. The lifetime is a per-profile, owner-editable
+    estimate (Claude subscription 60 min, Claude API key 5, Codex 5) because
+    providers guarantee none, sessions under `minContextTokens` show nothing,
+    and the miss penalty is priced only for API-key connections — for Claude
+    from the turn's own reported cost (Anthropic's fixed multipliers, write
+    tier following the TTL), for Codex from the rate table. The ring
+    (`sidebar/ui/ChannelCacheTimer.tsx`) hides while the agent is working and
+    its tooltip says not to ping just to keep a cache warm.
+
 ## Channel-only runtime controls
 
 Desktop observer controls identify a channel, not a thread session. The harness

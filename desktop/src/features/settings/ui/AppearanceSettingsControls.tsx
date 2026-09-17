@@ -41,6 +41,7 @@ import {
 } from "@/shared/theme/ThemeProvider";
 
 import { Switch } from "@/shared/ui/switch";
+import { CacheTimerSettingsRows } from "./CacheTimerSettingsRows";
 import { SettingsOptionRow } from "./SettingsOptionGroup";
 import {
   previewSidebarDensity,
@@ -284,6 +285,7 @@ export function ConversationDisplaySettings() {
           value={sidebarDensity}
         />
       </SettingsOptionRow>
+      <CacheTimerSettingsRows />
       <ConversationPreview />
     </div>
   );

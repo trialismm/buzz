@@ -19,6 +19,7 @@
 
 mod agent_usage;
 mod archive_db;
+mod cache_heads;
 mod metric_store;
 mod pipeline;
 pub mod retention;
@@ -823,6 +824,23 @@ pub async fn get_agent_usage_series(
     state
         .archive_db
         .with_conn(move |conn| agent_usage_series(conn, &identity_pk, &relay_url, &request))
+        .await
+}
+
+/// Latest archived turn metric per (channel, agent) since `since_unix`, for
+/// the sidebar's prompt-cache timers. See [`cache_heads`].
+#[tauri::command]
+pub async fn get_channel_cache_heads(
+    state: State<'_, AppState>,
+    since_unix: i64,
+) -> Result<Vec<cache_heads::ChannelCacheHead>, String> {
+    let identity_pk = identity_pubkey(&state)?;
+    let relay_url = relay_ws_url_with_override(&state);
+    state
+        .archive_db
+        .with_conn(move |conn| {
+            cache_heads::load_channel_cache_heads(conn, &identity_pk, &relay_url, since_unix)
+        })
         .await
 }
 
