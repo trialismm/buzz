@@ -341,7 +341,7 @@ function SidebarProjectsSectionContent() {
                               key={`${project.id}:${binding.role}:${channel.id}`}
                             >
                               <SidebarMenuButton
-                                className="h-7 pl-7 text-sidebar-foreground/70 data-[active=true]:!bg-transparent data-[active=true]:font-semibold data-[active=true]:text-sidebar-foreground data-[active=true]:shadow-none data-[active=true]:hover:!bg-transparent data-[active=true]:hover:text-sidebar-foreground data-[active=true]:active:!bg-transparent"
+                                className="h-(--sidebar-subrow-height) pl-7 text-sidebar-foreground/70 data-[active=true]:!bg-transparent data-[active=true]:font-semibold data-[active=true]:text-sidebar-foreground data-[active=true]:shadow-none data-[active=true]:hover:!bg-transparent data-[active=true]:hover:text-sidebar-foreground data-[active=true]:active:!bg-transparent"
                                 data-testid={`sidebar-project-channel-${project.dtag}-${channel.name}`}
                                 isActive={channel.id === routeChannelId}
                                 onClick={() => {

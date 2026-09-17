@@ -42,6 +42,12 @@ import {
 
 import { Switch } from "@/shared/ui/switch";
 import { SettingsOptionRow } from "./SettingsOptionGroup";
+import {
+  previewSidebarDensity,
+  setSidebarDensity,
+  type SidebarDensity,
+  useSidebarDensity,
+} from "@/shared/lib/sidebarDensityPreference";
 import { SegmentedControl } from "@/shared/ui/segmented-control";
 
 /** Buzz navigation can use either its production tint or a stronger tab. */
@@ -89,6 +95,14 @@ const LINK_PREVIEW_STYLE_OPTIONS: {
     label: "Rich",
     description: "Large previews with images and descriptions",
   },
+];
+
+const SIDEBAR_DENSITY_OPTIONS: readonly {
+  value: SidebarDensity;
+  label: string;
+}[] = [
+  { value: "compact", label: "Compact" },
+  { value: "comfortable", label: "Comfy" },
 ];
 
 const CONVERSATION_DENSITY_OPTIONS: readonly {
@@ -202,6 +216,7 @@ function ConversationPreview() {
 /** App-wide type sizing and conversation-specific spacing controls. */
 export function ConversationDisplaySettings() {
   const density = useConversationDensity();
+  const sidebarDensity = useSidebarDensity();
   const fontSize = useFontSize();
 
   return (
@@ -246,6 +261,27 @@ export function ConversationDisplaySettings() {
           options={CONVERSATION_DENSITY_OPTIONS}
           testId="conversation-density-control"
           value={density}
+        />
+      </SettingsOptionRow>
+      <SettingsOptionRow data-testid="sidebar-density-row">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">Sidebar density</p>
+          <p
+            className="text-sm font-normal text-muted-foreground/70"
+            data-settings-subcopy
+          >
+            Row height and spacing of the left sidebar
+          </p>
+        </div>
+        <SegmentedControl
+          size="wide"
+          legend="Sidebar density"
+          onPreviewChange={previewSidebarDensity}
+          onValueChange={setSidebarDensity}
+          optionTestIdPrefix="sidebar-density"
+          options={SIDEBAR_DENSITY_OPTIONS}
+          testId="sidebar-density-control"
+          value={sidebarDensity}
         />
       </SettingsOptionRow>
       <ConversationPreview />

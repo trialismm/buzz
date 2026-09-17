@@ -58,6 +58,29 @@
     --conversation-list-item-gap: 0.25rem;
   }
 
+  /*
+   * Sidebar density (Appearance → Sidebar density). Comfortable is the stock
+   * 32px row; Compact packs rows at 26px with hairline gaps so more of the
+   * workspace fits on screen. Consumed by shared/ui/sidebar.tsx.
+   */
+  :root {
+    --sidebar-row-height: 2rem;
+    --sidebar-subrow-height: 1.75rem;
+    --sidebar-row-gap: 0.25rem;
+    --sidebar-label-height: 2rem;
+    --sidebar-group-padding-block: 0.5rem;
+    --sidebar-group-gap: 0.5rem;
+  }
+
+  :root[data-sidebar-density="compact"] {
+    --sidebar-row-height: 1.625rem;
+    --sidebar-subrow-height: 1.5rem;
+    --sidebar-row-gap: 0.0625rem;
+    --sidebar-label-height: 1.5rem;
+    --sidebar-group-padding-block: 0.125rem;
+    --sidebar-group-gap: 0.25rem;
+  }
+
   :root[data-conversation-density="spacious"] {
     --conversation-body-gap: 0.25rem;
     --conversation-row-padding-block: 0.5rem;

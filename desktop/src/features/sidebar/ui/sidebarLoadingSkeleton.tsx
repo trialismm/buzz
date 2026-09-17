@@ -227,7 +227,7 @@ function SidebarLoadingRow({
 }) {
   return (
     <SidebarMenuItem>
-      <div className="flex h-8 items-center gap-2 rounded-md px-2">
+      <div className="flex h-(--sidebar-row-height) items-center gap-2 rounded-md px-2">
         <Skeleton
           className={cn(
             "shrink-0",
