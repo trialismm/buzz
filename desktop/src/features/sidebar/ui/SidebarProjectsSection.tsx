@@ -5,6 +5,7 @@ import {
   ChevronRight,
   EllipsisVertical,
   Folder,
+  FolderPlus,
   Folders,
   Hash,
   Link2,
@@ -91,6 +92,23 @@ import {
   SECTION_ICON_BUTTON_CLASS,
 } from "@/features/sidebar/ui/sidebarSectionStyles";
 import {
+  addProjectFolder,
+  assignProjectToFolder,
+  groupProjectsByFolder,
+  type ProjectFolder,
+  type ProjectFolderStore,
+  readProjectFolderStore,
+  removeProjectFolder,
+  renameProjectFolder,
+  setProjectFolderCollapsed,
+  writeProjectFolderStore,
+} from "@/features/sidebar/lib/projectFolders";
+import { SectionNameDialog } from "@/features/sidebar/ui/ChannelSectionDialogs";
+import {
+  ProjectFolderMoveMenu,
+  ProjectFolderRow,
+} from "@/features/sidebar/ui/SidebarProjectFolders";
+import {
   listSidebarProjects,
   readSidebarProjectExpansion,
   readSidebarProjectsFilter,
@@ -152,6 +170,15 @@ function SidebarProjectsSectionContent() {
     React.useState<SidebarProjectExpansionState>(() =>
       readSidebarProjectExpansion(relayOrigin, currentPubkey),
     );
+  const [folderStore, setFolderStore] = React.useState<ProjectFolderStore>(() =>
+    readProjectFolderStore(relayOrigin, currentPubkey),
+  );
+  // `create` optionally files a project into the folder it just made.
+  const [folderDialog, setFolderDialog] = React.useState<
+    | { mode: "create"; projectAddress: string | null }
+    | { mode: "rename"; folder: ProjectFolder }
+    | null
+  >(null);
   const addedProjectAddresses = useProjectSidebarMembership(
     relayOrigin,
     currentPubkey,
@@ -167,7 +194,19 @@ function SidebarProjectsSectionContent() {
     // change (currentPubkey is undefined until the identity query resolves).
     setFilter(readSidebarProjectsFilter(relayOrigin, currentPubkey));
     setSort(readSidebarProjectsSort(relayOrigin, currentPubkey));
+    setFolderStore(readProjectFolderStore(relayOrigin, currentPubkey));
   }, [currentPubkey, relayOrigin]);
+  const updateFolders = (
+    change: (store: ProjectFolderStore) => ProjectFolderStore,
+  ) => {
+    setFolderStore((current) => {
+      const next = change(current);
+      if (next !== current) {
+        writeProjectFolderStore(next, relayOrigin, currentPubkey);
+      }
+      return next;
+    });
+  };
   const addedProjectAddressSet = React.useMemo(
     () => new Set(addedProjectAddresses),
     [addedProjectAddresses],
@@ -182,6 +221,10 @@ function SidebarProjectsSectionContent() {
         sort,
       }),
     [addedProjectAddressSet, currentPubkey, filter, projectsQuery.data, sort],
+  );
+  const groupedProjects = React.useMemo(
+    () => groupProjectsByFolder(projects, folderStore),
+    [folderStore, projects],
   );
   const channelsById = React.useMemo(
     () =>
@@ -255,6 +298,87 @@ function SidebarProjectsSectionContent() {
     ],
   );
 
+  const renderProject = (project: Project) => {
+    const isActive =
+      routeProjectId != null && projectMatchesRouteId(project, routeProjectId);
+    const childChannels = listProjectChildChannels(project).flatMap(
+      (binding) => {
+        const channel = channelsById.get(binding.channelId);
+        return channel ? [{ binding, channel }] : [];
+      },
+    );
+    const isExpanded =
+      childChannels.length > 0 &&
+      (projectExpansion[project.projectAddress] ?? false);
+
+    return (
+      <React.Fragment key={project.id}>
+        <SidebarProjectRow
+          canDelete={canDeleteProject(project, currentPubkey, ownerProfiles)}
+          childCount={childChannels.length}
+          deleteDisabled={deleteProjectMutation.isPending}
+          isActive={isActive}
+          isExpanded={isExpanded}
+          onDelete={() => setProjectToDelete(project)}
+          onOpen={() => {
+            void goProject(project.id);
+          }}
+          onRemove={() => handleRemove(project)}
+          onToggleExpanded={() => setProjectExpanded(project, !isExpanded)}
+          folderMenu={
+            <ProjectFolderMoveMenu
+              currentFolderId={
+                folderStore.assignments[project.projectAddress] ?? null
+              }
+              folders={folderStore.folders}
+              onCreateFolder={() =>
+                setFolderDialog({
+                  mode: "create",
+                  projectAddress: project.projectAddress,
+                })
+              }
+              onMove={(folderId) =>
+                updateFolders((store) =>
+                  assignProjectToFolder(
+                    store,
+                    project.projectAddress,
+                    folderId,
+                  ),
+                )
+              }
+            />
+          }
+          project={project}
+        />
+        {isExpanded
+          ? childChannels.map(({ binding, channel }) => {
+              const ChannelIcon =
+                channel.visibility === "private" ? Lock : Hash;
+              return (
+                <SidebarMenuItem
+                  key={`${project.id}:${binding.role}:${channel.id}`}
+                >
+                  <SidebarMenuButton
+                    className="h-(--sidebar-subrow-height) pl-7 text-sidebar-foreground/70 data-[active=true]:!bg-transparent data-[active=true]:font-semibold data-[active=true]:text-sidebar-foreground data-[active=true]:shadow-none data-[active=true]:hover:!bg-transparent data-[active=true]:hover:text-sidebar-foreground data-[active=true]:active:!bg-transparent"
+                    data-testid={`sidebar-project-channel-${project.dtag}-${channel.name}`}
+                    isActive={channel.id === routeChannelId}
+                    onClick={() => {
+                      void goChannel(channel.id);
+                    }}
+                    tooltip={`#${channel.name}`}
+                    type="button"
+                  >
+                    <ChannelIcon className="h-3.5 w-3.5" />
+                    <SidebarMenuLabel>{`#${channel.name}`}</SidebarMenuLabel>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })
+          : null}
+      </React.Fragment>
+    );
+  };
+
   return (
     <SidebarGroup
       className="group/sidebar-section select-none"
@@ -286,6 +410,9 @@ function SidebarProjectsSectionContent() {
           filter={filter}
           onBrowseAll={() => void goProjects()}
           onCreate={() => setBrowserOpen(true)}
+          onCreateFolder={() =>
+            setFolderDialog({ mode: "create", projectAddress: null })
+          }
           onFilterChange={handleFilterChange}
           onOpenChange={setActionsOpen}
           onSortChange={handleSortChange}
@@ -296,69 +423,35 @@ function SidebarProjectsSectionContent() {
         <SidebarGroupContent id="sidebar-projects">
           {projects.length > 0 ? (
             <SidebarMenu data-testid="sidebar-projects">
-              {projects.map((project) => {
-                const isActive =
-                  routeProjectId != null &&
-                  projectMatchesRouteId(project, routeProjectId);
-                const childChannels = listProjectChildChannels(project).flatMap(
-                  (binding) => {
-                    const channel = channelsById.get(binding.channelId);
-                    return channel ? [{ binding, channel }] : [];
-                  },
-                );
-                const isExpanded =
-                  childChannels.length > 0 &&
-                  (projectExpansion[project.projectAddress] ?? false);
-
+              {groupedProjects.ungrouped.map(renderProject)}
+              {groupedProjects.folders.map(({ folder, projects: filed }) => {
+                const isFolderCollapsed =
+                  folderStore.collapsed[folder.id] === true;
                 return (
-                  <React.Fragment key={project.id}>
-                    <SidebarProjectRow
-                      canDelete={canDeleteProject(
-                        project,
-                        currentPubkey,
-                        ownerProfiles,
-                      )}
-                      childCount={childChannels.length}
-                      deleteDisabled={deleteProjectMutation.isPending}
-                      isActive={isActive}
-                      isExpanded={isExpanded}
-                      onDelete={() => setProjectToDelete(project)}
-                      onOpen={() => {
-                        void goProject(project.id);
-                      }}
-                      onRemove={() => handleRemove(project)}
-                      onToggleExpanded={() =>
-                        setProjectExpanded(project, !isExpanded)
+                  <React.Fragment key={folder.id}>
+                    <ProjectFolderRow
+                      collapsed={isFolderCollapsed}
+                      count={filed.length}
+                      folder={folder}
+                      onDelete={() =>
+                        updateFolders((store) =>
+                          removeProjectFolder(store, folder.id),
+                        )
                       }
-                      project={project}
+                      onRename={() =>
+                        setFolderDialog({ mode: "rename", folder })
+                      }
+                      onToggle={() =>
+                        updateFolders((store) =>
+                          setProjectFolderCollapsed(
+                            store,
+                            folder.id,
+                            !isFolderCollapsed,
+                          ),
+                        )
+                      }
                     />
-                    {isExpanded
-                      ? childChannels.map(({ binding, channel }) => {
-                          const ChannelIcon =
-                            channel.visibility === "private" ? Lock : Hash;
-                          return (
-                            <SidebarMenuItem
-                              key={`${project.id}:${binding.role}:${channel.id}`}
-                            >
-                              <SidebarMenuButton
-                                className="h-(--sidebar-subrow-height) pl-7 text-sidebar-foreground/70 data-[active=true]:!bg-transparent data-[active=true]:font-semibold data-[active=true]:text-sidebar-foreground data-[active=true]:shadow-none data-[active=true]:hover:!bg-transparent data-[active=true]:hover:text-sidebar-foreground data-[active=true]:active:!bg-transparent"
-                                data-testid={`sidebar-project-channel-${project.dtag}-${channel.name}`}
-                                isActive={channel.id === routeChannelId}
-                                onClick={() => {
-                                  void goChannel(channel.id);
-                                }}
-                                tooltip={`#${channel.name}`}
-                                type="button"
-                              >
-                                <ChannelIcon className="h-3.5 w-3.5" />
-                                <SidebarMenuLabel>
-                                  {`#${channel.name}`}
-                                </SidebarMenuLabel>
-                              </SidebarMenuButton>
-                            </SidebarMenuItem>
-                          );
-                        })
-                      : null}
+                    {isFolderCollapsed ? null : filed.map(renderProject)}
                   </React.Fragment>
                 );
               })}
@@ -391,6 +484,54 @@ function SidebarProjectsSectionContent() {
         open={browserOpen}
         projects={projectsQuery.data ?? []}
         selectedProjectAddresses={addedProjectAddressSet}
+      />
+      <SectionNameDialog
+        confirmLabel={folderDialog?.mode === "rename" ? "Save" : "Create"}
+        description={
+          folderDialog?.mode === "rename"
+            ? "Enter a new name for this folder."
+            : "Folders group projects in the sidebar on this device."
+        }
+        initialIcon={
+          folderDialog?.mode === "rename" ? folderDialog.folder.icon : undefined
+        }
+        initialValue={
+          folderDialog?.mode === "rename" ? folderDialog.folder.name : ""
+        }
+        isConfirmDisabled={(trimmed) => trimmed.length === 0}
+        onConfirm={(value) => {
+          const dialog = folderDialog;
+          if (!dialog) return;
+          if (dialog.mode === "rename") {
+            updateFolders((store) =>
+              renameProjectFolder(
+                store,
+                dialog.folder.id,
+                value.name,
+                value.icon,
+              ),
+            );
+          } else {
+            const id = crypto.randomUUID();
+            updateFolders((store) => {
+              const withFolder = addProjectFolder(
+                store,
+                id,
+                value.name,
+                value.icon,
+              );
+              return dialog.projectAddress
+                ? assignProjectToFolder(withFolder, dialog.projectAddress, id)
+                : withFolder;
+            });
+          }
+          setFolderDialog(null);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setFolderDialog(null);
+        }}
+        open={folderDialog != null}
+        title={folderDialog?.mode === "rename" ? "Rename folder" : "New folder"}
       />
       <AlertDialog
         onOpenChange={(open) => {
@@ -453,6 +594,7 @@ function SidebarProjectsHeaderActions({
   filter,
   onBrowseAll,
   onCreate,
+  onCreateFolder,
   onFilterChange,
   onOpenChange,
   onSortChange,
@@ -461,6 +603,7 @@ function SidebarProjectsHeaderActions({
   filter: SidebarProjectsFilter;
   onBrowseAll: () => void;
   onCreate: () => void;
+  onCreateFolder: () => void;
   onFilterChange: (filter: SidebarProjectsFilter) => void;
   onOpenChange: (open: boolean) => void;
   onSortChange: (sort: SidebarProjectsSort) => void;
@@ -552,6 +695,10 @@ function SidebarProjectsHeaderActions({
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => deferMenuAction(onCreateFolder)}>
+            <FolderPlus className="h-4 w-4" />
+            <span>New folder…</span>
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => deferMenuAction(onBrowseAll)}>
             <Folder className="h-4 w-4" />
             <span>Browse all projects</span>
@@ -566,6 +713,7 @@ function SidebarProjectRow({
   canDelete,
   childCount,
   deleteDisabled,
+  folderMenu,
   isActive,
   isExpanded,
   onDelete,
@@ -577,6 +725,8 @@ function SidebarProjectRow({
   canDelete: boolean;
   childCount: number;
   deleteDisabled: boolean;
+  /** "Move to folder" submenu for this project. */
+  folderMenu: React.ReactNode;
   isActive: boolean;
   isExpanded: boolean;
   onDelete: () => void;
@@ -655,6 +805,7 @@ function SidebarProjectRow({
           </ContextMenuIconSlot>
           <span>Remove from sidebar</span>
         </ContextMenuItem>
+        {folderMenu}
         {shareLink ? (
           <>
             <ContextMenuSeparator />

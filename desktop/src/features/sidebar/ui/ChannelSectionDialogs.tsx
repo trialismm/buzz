@@ -37,7 +37,7 @@ export type SectionDialogValue = {
   icon?: string;
 };
 
-type SectionNameDialogProps = {
+export type SectionNameDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
@@ -49,7 +49,7 @@ type SectionNameDialogProps = {
   onConfirm: (value: SectionDialogValue) => void;
 };
 
-function SectionNameDialog({
+export function SectionNameDialog({
   open,
   onOpenChange,
   title,
