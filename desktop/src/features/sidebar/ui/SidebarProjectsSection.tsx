@@ -11,6 +11,7 @@ import {
   Link2,
   ListMinus,
   Lock,
+  Pencil,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -26,6 +27,7 @@ import {
 } from "@/features/projects/hooks";
 import { listProjectChildChannels } from "@/features/projects/lib/projectRelatedChannels";
 import { canDeleteProject } from "@/features/projects/projectDeletion";
+import { useRenameProjectMutation } from "@/features/projects/renameProject";
 import { useProjectOwnerProfiles } from "@/features/projects/useProjectOwnerProfiles";
 import { projectShareLink } from "@/features/projects/lib/projectShareLinks";
 import {
@@ -53,6 +55,7 @@ import {
   AlertDialogTitle,
 } from "@/shared/ui/alert-dialog";
 import { Button } from "@/shared/ui/button";
+import { NameDialog } from "@/shared/ui/NameDialog";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -193,6 +196,10 @@ function SidebarProjectsSectionContent() {
   );
   const createProjectMutation = useCreateProjectMutation();
   const deleteProjectMutation = useDeleteProjectMutation();
+  const renameProjectMutation = useRenameProjectMutation();
+  const [projectToRename, setProjectToRename] = React.useState<Project | null>(
+    null,
+  );
   const isPending = projectsQuery.isPending || identityQuery.isPending;
   React.useEffect(() => {
     setProjectExpansion(
@@ -329,6 +336,11 @@ function SidebarProjectsSectionContent() {
             isActive={isActive}
             isExpanded={isExpanded}
             onDelete={() => setProjectToDelete(project)}
+            onRename={
+              project.owner === currentPubkey
+                ? () => setProjectToRename(project)
+                : undefined
+            }
             onOpen={() => {
               void goProject(project.id);
             }}
@@ -537,6 +549,37 @@ function SidebarProjectsSectionContent() {
         open={browserOpen}
         projects={projectsQuery.data ?? []}
         selectedProjectAddresses={addedProjectAddressSet}
+      />
+      <NameDialog
+        description="The name changes for everyone; the project's link and folder stay the same."
+        error={
+          renameProjectMutation.error instanceof Error
+            ? renameProjectMutation.error.message
+            : null
+        }
+        initialValue={projectToRename?.name ?? ""}
+        isPending={renameProjectMutation.isPending}
+        onConfirm={(name) => {
+          if (!projectToRename) return;
+          void renameProjectMutation
+            .mutateAsync({ project: projectToRename, name })
+            .then(() => {
+              toast.success(`Project renamed to ${name}`);
+              setProjectToRename(null);
+            })
+            .catch(() => {
+              // The dialog stays open and shows the mutation error.
+            });
+        }}
+        onOpenChange={(open) => {
+          if (!open) {
+            renameProjectMutation.reset();
+            setProjectToRename(null);
+          }
+        }}
+        open={projectToRename != null}
+        testId="rename-project-dialog"
+        title="Rename project"
       />
       <SectionNameDialog
         confirmLabel={folderDialog?.mode === "rename" ? "Save" : "Create"}
@@ -772,6 +815,7 @@ function SidebarProjectRow({
   onDelete,
   onOpen,
   onRemove,
+  onRename,
   onToggleExpanded,
   project,
 }: {
@@ -785,6 +829,8 @@ function SidebarProjectRow({
   onDelete: () => void;
   onOpen: () => void;
   onRemove: () => void;
+  /** Present only for the project's owner. */
+  onRename?: () => void;
   onToggleExpanded: () => void;
   project: Project;
 }) {
@@ -859,6 +905,17 @@ function SidebarProjectRow({
           <span>Remove from sidebar</span>
         </ContextMenuItem>
         {folderMenu}
+        {onRename ? (
+          <ContextMenuItem
+            data-testid={`sidebar-project-rename-${project.dtag}`}
+            onSelect={() => deferMenuAction(onRename)}
+          >
+            <ContextMenuIconSlot>
+              <Pencil className="h-4 w-4" />
+            </ContextMenuIconSlot>
+            <span>Rename project…</span>
+          </ContextMenuItem>
+        ) : null}
         {shareLink ? (
           <>
             <ContextMenuSeparator />

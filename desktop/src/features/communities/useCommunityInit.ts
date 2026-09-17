@@ -4,6 +4,7 @@ import { isMacPlatform } from "@/shared/lib/platform";
 
 import { relayClient } from "@/shared/api/relayClient";
 import { resetRateLimitGate } from "@/shared/api/relayRateLimitGate";
+import { resetRenameChannelRequest } from "@/features/sidebar/lib/renameChannelRequest";
 import {
   autoConnectDefaultRelayEnabled,
   getDefaultRelayUrl,
@@ -66,6 +67,7 @@ async function resetCommunityState({
   relayClient.disconnect();
   await resetNavigationDeepLinkDrain();
   resetRateLimitGate();
+  resetRenameChannelRequest();
   clearAllDrafts();
   resetAgentObserverStore();
   resetActiveAgentTurnsStore();

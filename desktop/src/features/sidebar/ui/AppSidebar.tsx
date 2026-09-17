@@ -1,6 +1,7 @@
 // biome-ignore format: keep compact to stay within file size limit
 import * as React from "react";
 import { FeatureGate } from "@/shared/features";
+import { RenameChannelDialogHost } from "@/features/sidebar/ui/RenameChannelDialogHost";
 import { SidebarDndContext } from "@/features/sidebar/ui/SidebarDnd";
 
 import { AddCommunityDialog } from "@/features/communities/ui/AddCommunityDialog";
@@ -906,6 +907,7 @@ export function AppSidebar({
         open={isAddCommunityOpen ?? false}
       />
 
+      <RenameChannelDialogHost />
       <CreateSectionDialog
         open={createSectionState.open}
         onOpenChange={(open) => {

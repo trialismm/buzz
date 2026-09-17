@@ -6,8 +6,9 @@ import {
   CheckCircle2,
   CircleDot,
   Copy,
-  LogOut,
   LoaderCircle,
+  LogOut,
+  Pencil,
   Plus,
   Star,
   StarOff,
@@ -27,6 +28,7 @@ import {
   deferMenuAction,
 } from "@/features/sidebar/ui/sidebarMenuHelpers";
 import { StatusEmoji } from "@/features/user-status/ui/StatusEmoji";
+import { requestChannelRename } from "@/features/sidebar/lib/renameChannelRequest";
 import type { Channel } from "@/shared/api/types";
 import { useIdentityQuery } from "@/shared/api/hooks";
 import { copyTextToClipboard } from "@/shared/lib/clipboard";
@@ -245,6 +247,17 @@ export function ChannelContextMenuItems({
           onUnassignChannel={onUnassignChannel ?? (() => {})}
           onCreateSectionForChannel={onCreateSectionForChannel ?? (() => {})}
         />
+      ) : null}
+      {canManageChannel ? (
+        <ContextMenuItem
+          data-testid={`channel-rename-${channel.id}`}
+          onSelect={() => deferMenuAction(() => requestChannelRename(channel))}
+        >
+          <ContextMenuIconSlot>
+            <Pencil className="h-4 w-4" />
+          </ContextMenuIconSlot>
+          <span>Rename channel…</span>
+        </ContextMenuItem>
       ) : null}
       {showReadToggle ? <ContextMenuSeparator /> : null}
       {hasProjectedUnread && onMarkChannelRead ? (
